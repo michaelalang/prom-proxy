@@ -1,0 +1,22 @@
+apiVersion: monitoring.rhobs/v1
+kind: PodMonitor
+metadata:
+  labels:
+    coo: monitoringstack
+  name: prompolicy
+spec:
+  attachMetadata:
+    node: true
+  fallbackScrapeProtocol: PrometheusText1.0.0
+  jobLabel: prompolicy
+  podMetricsEndpoints:
+    - honorLabels: true
+      interval: 10s
+      path: /metrics
+      portNumber: 8080
+      scheme: http
+  scrapeProtocols:
+    - OpenMetricsText1.0.0
+  selector:
+    matchLabels:
+      app: prom-policy

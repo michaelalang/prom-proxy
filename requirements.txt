@@ -1,0 +1,6 @@
+aiohttp
+async
+gunicorn
+cerbos
+promql-parser
+prometheus_client>=0.20.0

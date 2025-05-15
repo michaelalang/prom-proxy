@@ -1,0 +1,8 @@
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ThanosQuerier
+metadata:
+  name: thanos
+spec:
+  selector:
+    matchLabels:
+      coo: monitoringstack

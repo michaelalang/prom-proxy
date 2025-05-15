@@ -1,0 +1,12 @@
+#!/bin/bash
+API=${API:-"https://perses.apps.example.com/api/v1/"}
+echo "API ${API}"
+curl -k -X POST -d @project.json -H "Content-Type: application/json" ${API}projects
+
+for src in $(ls datasource*) ; do 
+    curl -k -X POST -d @${src} -H "Content-Type: application/json" ${API}globaldatasources
+done
+
+for dash in $(ls dashboard*) ; do 
+    curl -k -X POST -d @${dash} -H "Content-Type: application/json" ${API}projects/filtered/dashboards
+done
