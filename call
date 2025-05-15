@@ -1,8 +1,8 @@
 #!/bin/bash
 
-API="https://prompolicy.apps.example.com"
-AUTH_HEADER="X-Tenant-Id"
-INSTANCE="node1.example.com:9100"
+export API=${API:-"https://prompolicy.apps.example.com"}
+export AUTH_HEADER=${AUTH_HEADER:-"X-Tenant-Id"}
+export INSTANCE=${INSTANCE:-"node1.example.com:9100"}
 
 while true ; do 
 curl -H "${AUTH_HEADER}: default" -s "${API}/api/v1/query" -d 'query=up{}' -w '%{http_code}\n'
