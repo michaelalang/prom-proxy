@@ -56,7 +56,9 @@ def find_labelset(matchers):
     mkeys = {}
     for m in matchers:
         try:
-            regex = True if int(m.op) == 2 else False # 2 == MatchOp.Re, 0 == Match.Equal
+            regex = (
+                True if int(m.op) == 2 else False
+            )  # 2 == MatchOp.Re, 0 == Match.Equal
         except Exception as regerr:
             regex = False
         mkeys[m.name] = MetricName(m.name, m.value, regex)
@@ -297,69 +299,103 @@ def aggr_to_policy(pql):
     pqlbase = _pqlbase(pql)
     logger.debug(f"promql_parser.AggregateExpr {str(pqlbase)}", LF_MODEL)
     matchers = []
-    matchers.extend(
-        list(
-            map(
-                lambda x: x,
-                list(
-                    map(
-                        lambda y: y.vector_selector.matchers.matchers,
-                        pqlbase.args,
-                    )
-                )[0],
-            )
-        )
-    )
-    matchers.extend(
-        map(
-            lambda x: MetricName(x.vector_selector.name, x.vector_selector.name),
-            pqlbase.args,
-        )
-    )
-    mkeys = find_labelset(matchers)
-    pcheck = [
-        {
-            "function": get_labelset(
-                {
-                    "name": str(pqlbase.op),
-                    "return_type": str(pqlbase.func.return_type).split(".")[-1],
-                },
-                mkeys,
-            )
-        },
-        {
-            "function": get_labelset(
-                {
-                    "name": pqlbase.func.name,
-                    "arg_types": list(
+    if isinstance(pqlbase, promql_parser.VectorSelector):
+        return vector_to_policy(pql)
+    elif isinstance(pqlbase, promql_parser.Call):
+        return call_to_policy(pql)
+    else:
+        matchers.extend(
+            list(
+                map(
+                    lambda x: x,
+                    list(
                         map(
-                            lambda x: str(x).split(".")[-1],
-                            pqlbase.func.arg_types,
+                            lambda y: y.vector_selector.matchers.matchers,
+                            pqlbase.args,
                         )
                     )[0],
-                    "variadic": bool(pqlbase.func.variadic),
-                    "return_type": str(pqlbase.func.return_type).split(".")[-1],
-                },
-                mkeys,
-            )
-        },
-    ]
-
-    pcheck.extend(
-        list(
-            map(
-                lambda x: {
-                    "label": get_labelset(
-                        {
-                            "name": x.name,
-                        },
-                        mkeys,
-                    )
-                },
-                matchers,
+                )
             )
         )
-    )
+        matchers.extend(
+            map(
+                lambda x: MetricName(
+                    x.vector_selector.name, x.vector_selector.name, False
+                ),
+                pqlbase.args,
+            )
+        )
+    mkeys = find_labelset(matchers)
+    if isinstance(pqlbase, promql_parser.VectorSelector):
+        pcheck = [
+            {
+                "metric": get_labelset(
+                    {
+                        "name": pqlbase.name,
+                    },
+                    mkeys,
+                )
+            }
+        ]
+        pcheck.extend(
+            list(
+                map(
+                    lambda x: {
+                        "label": get_labelset(
+                            {
+                                "name": x.name,
+                            },
+                            mkeys,
+                        )
+                    },
+                    matchers,
+                )
+            )
+        )
+    else:
+        pcheck = [
+            {
+                "function": get_labelset(
+                    {
+                        "name": str(pqlbase.op),
+                        "return_type": str(pqlbase.func.return_type).split(".")[-1],
+                    },
+                    mkeys,
+                )
+            },
+            {
+                "function": get_labelset(
+                    {
+                        "name": pqlbase.func.name,
+                        "arg_types": list(
+                            map(
+                                lambda x: str(x).split(".")[-1],
+                                pqlbase.func.arg_types,
+                            )
+                        )[0],
+                        "variadic": bool(pqlbase.func.variadic),
+                        "return_type": str(pqlbase.func.return_type).split(".")[-1],
+                    },
+                    mkeys,
+                )
+            },
+        ]
+
+        pcheck.extend(
+            list(
+                map(
+                    lambda x: {
+                        "label": get_labelset(
+                            {
+                                "name": x.name,
+                            },
+                            mkeys,
+                        )
+                    },
+                    matchers,
+                )
+            )
+        )
     return pcheck, matchers
 
 
