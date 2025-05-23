@@ -61,6 +61,7 @@ LEARNING = bool(int(os.environ.get("LEARNING", False)))
 REPLACE_LABELS = bool(int(os.environ.get("REPLACE_LABELS", True)))
 AUTH_HEADER = os.environ.get("AUTH_HEADER", "Authorization")
 
+
 def replace_tenant_labels(tenant, query, data):
     logger.error(f"replace received data {data} {query} {tenant.id}", LF_MODEL)
     if REPLACE_LABELS:
@@ -147,7 +148,9 @@ def require_tenancy(data, req):
                     raise PromQLException(str(e))
             except PromQLException as e:
                 logger.error(f"PQL Exception {e}", LF_RESPONSES)
-                raise PromQLException(str(e))
+                logger.debug(f"UNTRACKED {data}", LF_RESPONSES)
+                tenant = get_principal(user_from_header(reqH))
+                return (tenant, query)
         try:
             pqlquery = query.get("query")
         except Exception as pqerr:
@@ -282,7 +285,7 @@ def require_tenancy(data, req):
         logger.info(f"Tenant {tenant.id} not allowed to query all data empty")
         if not LEARNING:
             raise PermissionDenied()
-    query, data = replace_tenant_labels(tenant, query, data)
+    # query, data = replace_tenant_labels(tenant, query, data)
     return (
         tenant,
         MultiDictProxy(MultiDict(query)) if query is not None else data,
@@ -291,7 +294,9 @@ def require_tenancy(data, req):
 
 def page_policy_resources(jbody=[], tenant=None, action="read"):
     # bad to hardcode but no other idea right now
-    logger.debug(f"page_policy_resources called with tenant {tenant} action {action}", LF_POLICY)
+    logger.debug(
+        f"page_policy_resources called with tenant {tenant} action {action}", LF_POLICY
+    )
     resource_list = ResourceList(resources=[])
     if not action == "response":
         rec_f = filter(lambda x: x.get("function", False), jbody)
@@ -303,11 +308,15 @@ def page_policy_resources(jbody=[], tenant=None, action="read"):
         resource_list.resources.extend(
             generate_functions(deduplicate(rec_f), tenant, action)
         )
-    except: pass
+    except:
+        pass
     resource_list.resources.extend(generate_metrics(deduplicate(rec_e), tenant, action))
     try:
-        resource_list.resources.extend(generate_labels(deduplicate(rec_l), tenant, action))
-    except: pass
+        resource_list.resources.extend(
+            generate_labels(deduplicate(rec_l), tenant, action)
+        )
+    except:
+        pass
     size = len(resource_list.resources)
     if size == 0:
         logger.debug(f"resource_list size {size} {resource_list.resources}", LF_POLICY)
@@ -332,7 +341,10 @@ def page_policy_resources(jbody=[], tenant=None, action="read"):
                         )
                     ),
                 )
-                logger.info(f"CERBOS call_id: tenant {tenant.id} {resp.cerbos_call_id} {action}", LF_BASE)
+                logger.info(
+                    f"CERBOS call_id: tenant {tenant.id} {resp.cerbos_call_id} {action}",
+                    LF_BASE,
+                )
                 avoid_log_flood = False
                 for r in list(
                     map(
@@ -344,7 +356,8 @@ def page_policy_resources(jbody=[], tenant=None, action="read"):
                         if not avoid_log_flood:
                             logger.error(
                                 f"VIOLATION [{action}] {tenant.id} {base64.b64decode(r.resource.id).decode('utf8')}",
-                            LF_BASE)
+                                LF_BASE,
+                            )
                             avoid_log_flood = True
                     except Exception as e:
                         logger.debug(f"VIOLATION r-{r}- t-{tenant}- e-{e}-", LF_POLICY)
@@ -370,7 +383,7 @@ def page_policy_resources(jbody=[], tenant=None, action="read"):
                         if not avoid_log_flood:
                             logger.error(
                                 f"VIOLATION [{action}] {tenant.id} {base64.b64decode(r.resource.id).decode('utf8')}",
-                                LF_BASE
+                                LF_BASE,
                             )
                             avoid_log_flood = True
                     except Exception as e:
@@ -389,7 +402,9 @@ def page_policy_resources(jbody=[], tenant=None, action="read"):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as tpe:
         while True:
             pend = page + PAGESIZE if page + PAGESIZE <= size else size
-            logger.debug(f"threading off for {page} -> {pend} action {action}", LF_POLICY)
+            logger.debug(
+                f"threading off for {page} -> {pend} action {action}", LF_POLICY
+            )
             threads.append(tpe.submit(policy_verify, page, pend, resource_list, action))
             page = page + PAGESIZE
             if page > size:

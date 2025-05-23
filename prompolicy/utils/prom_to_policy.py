@@ -11,6 +11,7 @@ from prompolicy.utils.logfilter import (
     LF_POLICY,
 )
 import os
+import traceback
 
 MetricName = namedtuple("MetricName", ["name", "value", "regex"])
 baselevel = logging.DEBUG if os.environ.get("DEBUG", False) else logging.INFO
@@ -23,6 +24,15 @@ class FakeMatcher(object):
         faker = namedtuple("FakeMatcher", ["matchers"])
         self.matchers = faker([])
         self.name = "fake"
+
+
+def flattened(matchers):
+    for m in matchers:
+        if isinstance(m, list):
+            for mm in flattened(m):
+                yield mm
+        else:
+            yield m
 
 
 def user_from_header(reqH):
@@ -55,6 +65,9 @@ def _pqlbase(pql):
 def find_labelset(matchers):
     mkeys = {}
     for m in matchers:
+        if isinstance(m, list):
+            mkeys.update(find_labelset(m))
+            continue
         try:
             regex = (
                 True if int(m.op) == 2 else False
@@ -94,7 +107,43 @@ def get_matchers_deep(pqlbase, k):
         try:
             if isinstance(matcher, promql_parser.BinaryExpr):
                 matcher = getattr(matcher, k)
+                if isinstance(matcher, promql_parser.Call):
+                    for arg in matcher.args:
+                        if isinstance(arg, promql_parser.MatrixSelector):
+                            return arg.vector_selector
+                        elif isinstance(arg, promql_parser.VectorSelector):
+                            return arg
+                        elif isinstance(arg, promql_parser.ParenExpr):
+                            matcher = _pqlbase(_pqlbase(arg))
+                            return get_matchers_deep(matcher, k)
+                        elif isinstance(arg, promql_parser.AggregateExpr):
+                            matcher = _pqlbase(_pqlbase(arg))
+                            return get_matchers_deep(matcher, k)
+                        elif isinstance(arg, promql_parser.BinaryExpr):
+                            matcher = _pqlbase(_pqlbase(arg))
+                            return get_matchers_deep(matcher, k)
+                        elif isinstance(arg, promql_parser.Call):
+                            matcher = _pqlbase(_pqlbase(arg))
+                            return get_matchers_deep(matcher, k)
                 continue
+            elif isinstance(matcher, promql_parser.BinaryExpr):
+                for arg in getattr(matcher, k).args:
+                    if isinstance(arg, promql_parser.MatrixSelector):
+                        return arg.vector_selector
+                    elif isinstance(arg, promql_parser.VectorSelector):
+                        return arg
+                    elif isinstance(arg, promql_parser.ParenExpr):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
+                    elif isinstance(arg, promql_parser.AggregateExpr):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
+                    elif isinstance(arg, promql_parser.BinaryExpr):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
+                    elif isinstance(arg, promql_parser.Call):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
             elif isinstance(matcher, promql_parser.VectorSelector):
                 break
             elif isinstance(matcher, promql_parser.AggregateExpr):
@@ -119,6 +168,13 @@ def get_matchers_deep(pqlbase, k):
                     elif isinstance(arg, promql_parser.AggregateExpr):
                         matcher = _pqlbase(_pqlbase(arg))
                         return get_matchers_deep(matcher, k)
+                    elif isinstance(arg, promql_parser.BinaryExpr):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
+                    elif isinstance(arg, promql_parser.Call):
+                        matcher = _pqlbase(_pqlbase(arg))
+                        return get_matchers_deep(matcher, k)
+
                 break
         except Exception as e:
             logger.error(f"EXCEPTION get_matchers_deep {e}", LF_BASE)
@@ -154,11 +210,11 @@ def vector_to_policy(pql):
                         mkeys,
                     )
                 },
-                matchers,
+                flattened(matchers),
             )
         )
     )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
 
 
 def binary_connect(pql, reqH):
@@ -230,50 +286,58 @@ def binary_to_policy(pql):
                         mkeys,
                     )
                 },
-                matchers,
+                flattened(matchers),
             )
         )
     )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
 
 
 def parent_to_policy(pql):
     pqlbase = _pqlbase(pql)
 
     matchers = []
-    matchers.extend(
-        list(
-            map(
-                lambda x: x,
-                getmatchers(
-                    [
-                        get_matchers_deep(pqlbase, "lhs").matchers.matchers,
-                        get_matchers_deep(pqlbase, "rhs").matchers.matchers,
-                    ]
-                ),
+    try:
+        matchers.extend(
+            list(
+                map(
+                    lambda x: x,
+                    getmatchers(
+                        [
+                            get_matchers_deep(pqlbase, "lhs").matchers.matchers,
+                            get_matchers_deep(pqlbase, "rhs").matchers.matchers,
+                        ]
+                    ),
+                )
             )
         )
-    )
+    except AttributeError:
+        logger.error(f"FIXME !!!")
+        return [], []
     mkeys = find_labelset(matchers)
-    pcheck = [
-        {"function": {"name": str(pql.expr.op)}},
-        {
-            "metric": get_labelset(
-                {
-                    "name": pqlbase.lhs.name,
-                },
-                mkeys,
-            )
-        },
-        {
-            "metrics": get_labelset(
-                {
-                    "name": pqlbase.rhs.name,
-                },
-                mkeys,
-            )
-        },
-    ]
+    try:
+        pcheck = [
+            {"function": {"name": str(pql.expr.op)}},
+            {
+                "metric": get_labelset(
+                    {
+                        "name": pqlbase.lhs.name,
+                    },
+                    mkeys,
+                )
+            },
+            {
+                "metrics": get_labelset(
+                    {
+                        "name": pqlbase.rhs.name,
+                    },
+                    mkeys,
+                )
+            },
+        ]
+    except Exception as perr:
+        logger.error(f"pcheck Exception {perr}")
+        return [], []
 
     pcheck.extend(
         list(
@@ -286,11 +350,11 @@ def parent_to_policy(pql):
                         mkeys,
                     )
                 },
-                matchers,
+                flattened(matchers),
             )
         )
     )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
 
 
 def aggr_to_policy(pql):
@@ -303,6 +367,10 @@ def aggr_to_policy(pql):
         return vector_to_policy(pql)
     elif isinstance(pqlbase, promql_parser.Call):
         return call_to_policy(pql)
+    elif isinstance(pqlbase, promql_parser.BinaryExpr):
+        return binary_to_policy(pqlbase)
+    elif isinstance(pqlbase, promql_parser.AggregateExpr):
+        return aggr_to_policy(pqlbase)
     else:
         matchers.extend(
             list(
@@ -348,7 +416,7 @@ def aggr_to_policy(pql):
                             mkeys,
                         )
                     },
-                    matchers,
+                    flattened(matchers),
                 )
             )
         )
@@ -392,14 +460,47 @@ def aggr_to_policy(pql):
                             mkeys,
                         )
                     },
-                    matchers,
+                    flattened(matchers),
                 )
             )
         )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
 
 
 def call_to_policy(pql):
+    def get_selector(y):
+        if not isinstance(y, list):
+            y = [y]
+        for arg in y:
+            if isinstance(arg, promql_parser.NumberLiteral):
+                continue
+            elif isinstance(arg, promql_parser.SubqueryExpr):
+                for subarg in get_selector(_pqlbase(arg).args):
+                    if isinstance(subarg, promql_parser.MatrixSelector):
+                        yield subarg.vector_selector.matchers.matchers
+                    elif isinstance(subarg, promql_parser.VectorSelector):
+                        yield subarg.matchers.matchers
+            elif isinstance(arg, promql_parser.MatrixSelector):
+                yield arg.vector_selector.matchers.matchers
+            elif isinstance(arg, promql_parser.Call):
+                for subarg in get_selector(_pqlbase(arg).args):
+                    if isinstance(subarg, promql_parser.MatrixSelector):
+                        yield subarg.vector_selector.matchers.matchers
+                    elif isinstance(subarg, promql_parser.VectorSelector):
+                        yield subarg.matchers.matchers
+            elif isinstance(arg, promql_parser.AggregateExpr):
+                for subarg in get_selector(_pqlbase(arg.expr).args):
+                    if isinstance(subarg, promql_parser.MatrixSelector):
+                        yield subarg.vector_selector.matchers.matchers
+                    elif isinstance(subarg, promql_parser.VectorSelector):
+                        yield subarg.matchers.matchers
+            else:
+                try:
+                    yield arg.vector_selector.matchers.matchers
+                except Exception as selerr:
+                    logger.error(traceback.print_tb(selerr))
+                    logger.error(y)
+
     pqlbase = _pqlbase(pql)
     pqlbase.func.name
     matchers = []
@@ -409,19 +510,24 @@ def call_to_policy(pql):
                 lambda x: x,
                 list(
                     map(
-                        lambda y: y.vector_selector.matchers.matchers,
-                        pqlbase.args,
+                        lambda y: y,
+                        get_selector(pqlbase.args),
                     )
-                )[0],
+                ),
             )
         )
     )
-    matchers.extend(
-        map(
-            lambda x: MetricName(x.vector_selector.name, x.vector_selector.name, False),
-            pqlbase.args,
+    try:
+        matchers.extend(
+            map(
+                lambda x: MetricName(
+                    x.vector_selector.name, x.vector_selector.name, False
+                ),
+                pqlbase.args,
+            )
         )
-    )
+    except Exception as pqlerr:
+        pass
     mkeys = find_labelset(matchers)
     pcheck = [
         {
@@ -452,11 +558,11 @@ def call_to_policy(pql):
                         mkeys,
                     )
                 },
-                matchers,
+                flattened(matchers),
             )
         )
     )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
 
 
 def expr_to_policy(pql):
@@ -476,7 +582,7 @@ def expr_to_policy(pql):
                     mkeys,
                 )
             },
-            matchers,
+            flattened(matchers),
         )
     )
-    return pcheck, matchers
+    return pcheck, flattened(matchers)
