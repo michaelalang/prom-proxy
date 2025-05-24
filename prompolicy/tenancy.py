@@ -295,7 +295,7 @@ def require_tenancy(data, req):
 def page_policy_resources(jbody=[], tenant=None, action="read"):
     # bad to hardcode but no other idea right now
     logger.debug(
-        f"page_policy_resources called with tenant {tenant} action {action}", LF_POLICY
+        f"page_policy_resources called with tenant {tenant} roles action {action}", LF_POLICY
     )
     resource_list = ResourceList(resources=[])
     if not action == "response":

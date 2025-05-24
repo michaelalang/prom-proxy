@@ -1,23 +1,25 @@
-from cerbos.sdk.model import Principal, Resource, ResourceAction, ResourceList
-from cerbos.engine.v1 import engine_pb2
-from google.protobuf.struct_pb2 import Value
-from prompolicy.promstats import POLICY_ITEMS
-import os
 import base64
-from copy import deepcopy
 import json
-import urllib.parse
 import logging
+import os
+import urllib.parse
 import uuid
 from collections import defaultdict
+from copy import deepcopy
 
+import jwt
+from cerbos.engine.v1 import engine_pb2
+from cerbos.sdk.model import Principal, Resource, ResourceAction, ResourceList
+from google.protobuf.struct_pb2 import Value, ListValue
+
+from prompolicy.promstats import POLICY_ITEMS
 from prompolicy.utils.logfilter import (
-    FilteredLogger,
     LF_BASE,
-    LF_RESPONSES,
     LF_MODEL,
     LF_POLICY,
+    LF_RESPONSES,
     LF_WEB,
+    FilteredLogger,
 )
 
 baselevel = logging.DEBUG if os.environ.get("DEBUG", False) else logging.INFO
@@ -59,11 +61,8 @@ def b64encode(content):
             ctx = json.loads(ctx)
             return base64.b64encode(json.dumps(ctx).encode("utf8")).decode("utf8")
         except:
-            logger.error(
-                f"POLICY not jsonable {ctx}", LF_BASE
-            )
+            logger.error(f"POLICY not jsonable {ctx}", LF_BASE)
             return str(uuid.uuid4())
-
 
 
 def generate_functions(functions, tenant, action):
@@ -301,6 +300,23 @@ def generate_labels(labels, tenant, action):
 
 
 def get_principal(name):
+    rolemappings = {}
+    try:
+        token = jwt.JWT().decode(name.split()[-1], do_verify=False)
+        if token.get("iss", False) == "kubernetes/serviceaccount":
+            name = token.get("kubernetes.io/serviceaccount/service-account.name")
+            rolemappings = {
+                name: token.get("kubernetes.io/serviceaccount/roles", ["user"])
+            }
+        logger.error(f"!!RoleMappings from Token {rolemappings}")
+    except Exception as jwterr:
+        logger.error(f"cannot decode {name} as JWT token")
+
+    def roles_to_listvalue(roles):
+        r = ListValue()
+        map(lambda x: r.append(x), set(roles))
+        return r
+
     if CERBOSAPI.scheme == "grpc":
 
         def map_attrs(attrs):
@@ -313,25 +329,23 @@ def get_principal(name):
                 )
             return newattrs
 
-        if os.path.isfile("/config/role-mappings.json"):
-            rolemappings = json.load(open("/config/role-mappings.json"))
-        else:
-            rolemappings = {}
         principal = engine_pb2.Principal(
             id=name,
-            roles=set(rolemappings.get(name, ["user"])),
+            roles=list(set(rolemappings.get(name, ["user"]))),
             policy_version="20210210",
             attr={},
         )
+        logger.error(f"!!! Principal with roles {principal}")
     else:
         principal = Principal(
             name,
             roles={
                 "user",
             },
-            attr={},  # principals.get(user, principals[user]).get("attr"),
+            attr={},  # "roles": set(rolemappings.get(name, ["user"]))},
         )
     return principal
+
 
 def remap_results(data, values=False):
     try:
@@ -344,11 +358,12 @@ def remap_results(data, values=False):
         if values:
             try:
                 newdata["values"] = data["values"]
-            except KeyError:
+            except KeyError as kerr:
                 try:
                     newdata["value"] = data["value"]
-                except:
-                    raise AttributeError()
+                except KeyError as kerr:
+                    logger.error(f"remap_results data keys {data.keys()}")
+                    raise KeyError(kerr)
         return newdata
     except AttributeError:
         return data
