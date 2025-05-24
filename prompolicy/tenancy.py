@@ -29,6 +29,7 @@ from prompolicy.utils.prom_to_policy import (
     call_to_policy,
     expr_to_policy,
     user_from_header,
+    unary_to_policy,
 )
 from grpc._channel import _InactiveRpcError
 from prompolicy.promstats import VIOLATIONS_TOTAL, GRPC_CALLS_LATENCY, GRPC_CALLS_TOTAL
@@ -191,6 +192,8 @@ def require_tenancy(data, req):
             pcheck, matchers = aggr_to_policy(pql)
         elif isinstance(pql, promql_parser.Call):
             pcheck, matchers = call_to_policy(pql)
+        elif isinstance(pql, promql_parser.UnaryExpr):
+            pcheck, matchers = unary_to_policy(pql)
         else:
             pcheck, matchers = expr_to_policy(pql)
         pcheck = deduplicate(pcheck)

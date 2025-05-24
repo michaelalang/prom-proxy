@@ -74,7 +74,10 @@ def find_labelset(matchers):
             )  # 2 == MatchOp.Re, 0 == Match.Equal
         except Exception as regerr:
             regex = False
-        mkeys[m.name] = MetricName(m.name, m.value, regex)
+        try:
+            mkeys[m.name] = MetricName(m.name, m.value, regex)
+        except AttributeError:
+            mkeys[m.name] = MetricName(m.name, "", regex)
     return mkeys
 
 
@@ -371,6 +374,8 @@ def aggr_to_policy(pql):
         return binary_to_policy(pqlbase)
     elif isinstance(pqlbase, promql_parser.AggregateExpr):
         return aggr_to_policy(pqlbase)
+    elif isinstance(pqlbase, promql_parser.ParenExpr):
+        return parent_to_policy(pqlbase)
     else:
         matchers.extend(
             list(
@@ -474,12 +479,16 @@ def call_to_policy(pql):
         for arg in y:
             if isinstance(arg, promql_parser.NumberLiteral):
                 continue
+            elif isinstance(arg, promql_parser.StringLiteral):
+                continue
             elif isinstance(arg, promql_parser.SubqueryExpr):
                 for subarg in get_selector(_pqlbase(arg).args):
                     if isinstance(subarg, promql_parser.MatrixSelector):
                         yield subarg.vector_selector.matchers.matchers
                     elif isinstance(subarg, promql_parser.VectorSelector):
                         yield subarg.matchers.matchers
+                    elif isinstance(subarg, promql_parser.StringLiteral):
+                        continue
             elif isinstance(arg, promql_parser.MatrixSelector):
                 yield arg.vector_selector.matchers.matchers
             elif isinstance(arg, promql_parser.Call):
@@ -488,12 +497,28 @@ def call_to_policy(pql):
                         yield subarg.vector_selector.matchers.matchers
                     elif isinstance(subarg, promql_parser.VectorSelector):
                         yield subarg.matchers.matchers
+                    elif isinstance(subarg, promql_parser.AggregateExpr):
+                        for k in ("lhs", "rhs"):
+                            yield get_matchers_deep(subarg, k)
+                    elif isinstance(subarg, promql_parser.StringLiteral):
+                        continue
             elif isinstance(arg, promql_parser.AggregateExpr):
-                for subarg in get_selector(_pqlbase(arg.expr).args):
-                    if isinstance(subarg, promql_parser.MatrixSelector):
-                        yield subarg.vector_selector.matchers.matchers
-                    elif isinstance(subarg, promql_parser.VectorSelector):
-                        yield subarg.matchers.matchers
+                if isinstance(_pqlbase(arg.expr), promql_parser.BinaryExpr):
+                    for k in ("lhs", "rhs"):
+                        yield get_matchers_deep(arg, k)
+                elif isinstance(arg.expr, promql_parser.VectorSelector):
+                    yield arg.expr.matchers.matchers
+                else:
+                    for subarg in get_selector(_pqlbase(arg.expr).args):
+                        if isinstance(subarg, promql_parser.MatrixSelector):
+                            yield subarg.vector_selector.matchers.matchers
+                        elif isinstance(subarg, promql_parser.VectorSelector):
+                            yield subarg.matchers.matchers
+                        elif isinstance(subarg, promql_parser.StringLiteral):
+                            continue
+            elif isinstance(arg, promql_parser.BinaryExpr):
+                for k in ("lhs", "rhs"):
+                    yield get_matchers_deep(arg, k)
             else:
                 try:
                     yield arg.vector_selector.matchers.matchers
@@ -563,6 +588,14 @@ def call_to_policy(pql):
         )
     )
     return pcheck, flattened(matchers)
+
+
+def unary_to_policy(pql):
+    pqlbase = _pqlbase(pql)
+    if isinstance(pqlbase.expr, promql_parser.ParenExpr):
+        return parent_to_policy(pqlbase.expr)
+    logger.error("!!! FIXME unary_to_policy")
+    return [], []
 
 
 def expr_to_policy(pql):

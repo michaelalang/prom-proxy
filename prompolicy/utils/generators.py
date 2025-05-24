@@ -342,7 +342,13 @@ def remap_results(data, values=False):
             else:
                 newdata["metric"][k] = data["metric"][k]
         if values:
-            newdata["values"] = data["values"]
+            try:
+                newdata["values"] = data["values"]
+            except KeyError:
+                try:
+                    newdata["value"] = data["value"]
+                except:
+                    raise AttributeError()
         return newdata
     except AttributeError:
         return data

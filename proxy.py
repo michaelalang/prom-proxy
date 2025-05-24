@@ -287,7 +287,7 @@ async def handler(req):
             str(req.path).startswith("/api/v1/label"),
         ]
     ):
-        logger.info(f"Whitelist for {req.path}", LF_WEB)
+        logger.info(f"Whitelist for {req.path} {reqdata}", LF_WEB)
         tenant, data = get_principal("anonymous-allowed"), reqdata
 
     try:
@@ -295,7 +295,10 @@ async def handler(req):
     except PromQLException as pqlerr:
         logger.error(f"Proxy1 PromQLException {pqlerr}", LF_BASE)
         logger.error(f"reqdata = {await req.post()}", LF_MODEL)
-        return web.Response(status=pqlerr.code, body=pqlerr.msg)
+        # don't fail on parsing errors for now
+        tenant = get_principal("anonymous-allowed")
+        data = reqdata.copy()
+        # return web.Response(status=pqlerr.code, body=pqlerr.msg)
     except Learning:
         logger.error(
             f"PermissionDenied require valid Tenant {req} {dict(req.query.copy())} {dict(reqdata)}",
@@ -313,7 +316,15 @@ async def handler(req):
     except Exception as err:
         traceback.print_exception(err)
     try:
-        params = data if req.query.get("query") != MultiDictProxy(MultiDict()) else None
+        if all(
+            [
+                req.query.get("query") != MultiDictProxy(MultiDict()),
+                req.query.get("query") != MultiDict(),
+            ]
+        ):
+            params = reqdata.copy()
+        else:
+            params = req.query.get("query")
         logger.debug(f"params from data {params}", LF_POLICY)
     except Exception as parerr:
         params = None
@@ -342,7 +353,8 @@ async def handler(req):
         )
         if reqparams["params"] == MultiDictProxy(MultiDict()):
             del reqparams["params"]
-
+    if params in ["", MultiDictProxy(MultiDict()), MultiDict()]:
+        reqparams["params"] = params
     if all(
         [
             reqparams.get("params", False) not in (False, MultiDictProxy(MultiDict())),
