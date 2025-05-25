@@ -280,7 +280,6 @@ async def handler(req):
         [
             str(req.path)
             in (
-                "/api/v1/series",
                 "/api/v1/metadata",
                 "/-/healthy",
                 "-/ready",
@@ -315,10 +314,9 @@ async def handler(req):
     except Exception as err:
         traceback.print_exception(err)
     try:
-        params = data if req.query.get("query") != MultiDictProxy(MultiDict()) else None
-        logger.debug(f"params from data {params}", LF_POLICY)
+        params = req.query.copy()
     except Exception as parerr:
-        params = None
+        logger.error(f"Params query Exception {parerr}", LF_BASE)
 
     reqparams = {
         "method": req.method,

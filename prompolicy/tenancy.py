@@ -143,12 +143,15 @@ def require_tenancy(data, req):
                 raise PromQLException("unparse able")
         except PromQLException as e:
             try:
-                query = req.query.copy()
-                if query == MultiDict():
-                    raise PromQLException(str(e))
-            except PromQLException as e:
-                logger.error(f"PQL Exception {e}", LF_RESPONSES)
-                logger.debug(f"UNTRACKED {data}", LF_RESPONSES)
+                pqlquery = query.get("match[]")
+            except Exception as e:
+                try:
+                    query = req.query.copy()
+                    if query == MultiDict():
+                        raise PromQLException(str(e))
+                except PromQLException as e:
+                    logger.error(f"PQL Exception {e}", LF_RESPONSES)
+                    logger.debug(f"UNTRACKED {data}", LF_RESPONSES)
                 tenant = get_principal(user_from_header(reqH))
                 return (tenant, query)
         try:
@@ -157,11 +160,13 @@ def require_tenancy(data, req):
             logger.debug(f"PQLQUERY {query.get('query')}", LF_MODEL)
             logger.debug(f"PQLQUERY Exception {e}", LF_MODEL)
         if pqlquery == None:
-            if not query.get("match[]", False):
+            try:
+                pqlquery = query.get("match[]")
+            except Exception as e:
                 logger.debug(f"UNTRACKED {data}", LF_RESPONSES)
                 raise PromQLException(f"untracked {data}")
-            tenant = get_principal(user_from_header(reqH))
-            return (tenant, query)
+        # tenant = get_principal(user_from_header(reqH))
+        # return (tenant, query)
         try:
             pql = promql_parser.parse(pqlquery)
             logger.debug(pql, LF_RESPONSES)
@@ -295,7 +300,8 @@ def require_tenancy(data, req):
 def page_policy_resources(jbody=[], tenant=None, action="read"):
     # bad to hardcode but no other idea right now
     logger.debug(
-        f"page_policy_resources called with tenant {tenant} roles action {action}", LF_POLICY
+        f"page_policy_resources called with tenant {tenant} roles action {action}",
+        LF_POLICY,
     )
     resource_list = ResourceList(resources=[])
     if not action == "response":

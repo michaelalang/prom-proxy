@@ -303,14 +303,39 @@ def get_principal(name):
     rolemappings = {}
     try:
         token = jwt.JWT().decode(name.split()[-1], do_verify=False)
-        if token.get("iss", False) == "kubernetes/serviceaccount":
-            name = token.get("kubernetes.io/serviceaccount/service-account.name")
-            rolemappings = {
-                name: token.get("kubernetes.io/serviceaccount/roles", ["user"])
-            }
-        logger.error(f"!!RoleMappings from Token {rolemappings}")
     except Exception as jwterr:
-        logger.error(f"cannot decode {name} as JWT token")
+        try:
+            token = jwt.JWT().decode(name, do_verify=False)
+        except Exception as jwterr:
+            logger.debug(f"cannot decode JWT from {name}")
+            token = {}
+    # different types of JWTs so check if we can have a username
+    # TODO: make ordering and selected JWT field configurable
+    name = (
+        token.get("preferred_username")
+        if token.get("preferred_username", False) is not False
+        else (
+            token.get("username")
+            if token.get("username", False) is not False
+            else token.get("email")
+        )
+    )
+
+    groups = (
+        token.get("groups")
+        if token.get("groups", False) is not False
+        else (
+            token.get("resource_access", {}).get("account", {}).get("roles")
+            if token.get("resource_access", {}).get("account", {}).get("roles", False)
+            is not False
+            else ["user"]
+        )
+    )
+
+    if token.get("kubernetes.io/serviceaccount/namespace", False) is not False:
+        groups.append(token.get("kubernetes.io/serviceaccount/namespace"))
+
+    rolemappings = {name: groups}
 
     def roles_to_listvalue(roles):
         r = ListValue()
