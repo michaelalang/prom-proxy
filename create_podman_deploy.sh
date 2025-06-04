@@ -16,7 +16,7 @@ podman run -d --replace --pod prom-policy --rm \
  	-e PROMAPI=https://prometheus.apps.example.com \
  	-e MAX_WORKERS=10 \
  	-e DEBUG=0 \
- 	localhost/prom-authz:v1.0.4
+ 	localhost/prom-authz:v2.0.0
 
 podman run -d --replace --pod prom-policy --rm \
 	--name perses \

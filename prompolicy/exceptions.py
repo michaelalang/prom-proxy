@@ -28,3 +28,19 @@ class CerbosGRPCDown(Exception):
         super(CerbosGRPCDown, self).__init__()
         self.msg = msg
         self.code = 503
+
+
+class MetricPrincipalException(Exception):
+
+    def __init__(self, msg="Permission Denied, Authorization required"):
+        super(MetricPrincipalException, self).__init__()
+        self.msg = msg.encode("utf8")
+        self.code = 403
+
+
+class PromFilterException(Exception):
+
+    def __init__(self, msg="Permission Denied, Authorization required"):
+        super(PromFilterException, self).__init__()
+        self.msg = msg.encode("utf8")
+        self.code = 403

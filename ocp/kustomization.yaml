@@ -4,16 +4,18 @@ resources:
 - cerbosconfig.yml
 - deploy-perses.yml
 - deploy.yml
-- monitoring-stack.yml
+#- monitoring-stack.yml
 - namespace.yml
 - podmonitor.yml
 - policycreds-secret.yml
 - route.yml
 - service-perses.yml
 - service.yml
-- thanos-querier.yml
+#- thanos-querier.yml
+- collector-cm.yml
+- deploy-1.yml
 
 images:
 - name: localhost/prom-authz
-  newName: ghcr.io/michaelalang/prom-authz
-  newTag: v1.0.4
+  newName: quay.chester.at/infrastructure/prom-authz
+  newTag: v2.0.0

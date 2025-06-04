@@ -1,0 +1,41 @@
+apiVersion: v1
+data:
+  collector.yml: "receivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint:\
+    \ 127.0.0.1:4317\n  syslog:\n    udp:\n      listen_address: \"127.0.0.1:50514\"\
+    \n    protocol:  rfc5424 # rfc3164 # rfc5424\n    operators:\n      - type: move\n\
+    \        from: attributes.message\n        to: body\n      - type: move\n    \
+    \    from: attributes.appname\n        to: attributes.application\n        on_error:\
+    \ send_quiet\n      - type: regex_parser\n        regex: '\\#\\d{2}\\-(?P<trace_id>.{32})\\\
+    -(?P<span_id>.{16})\\-(?P<trace_flags>\\d{2})$'\n        on_error: send_quiet\n\
+    \        trace:\n          trace_id:\n            parse_from: attributes.trace_id\n\
+    \          span_id:\n            parse_from: attributes.span_id\n          trace_flags:\n\
+    \            parse_from: attributes.trace_flags\n      - type: regex_parser\n\
+    \        regex: '^(?<body>.+?)(\\#\\d{2}\\-.{32}\\-.{16}\\-\\d{2}$|$)'\n     \
+    \   parse_from: body\n        on_error: send_quiet\n      - type: move\n     \
+    \   from: attributes.body\n        to: body\n        on_error: send_quiet\n\n\
+    exporters:\n  debug:\n    verbosity: detailed\n    sampling_initial: 5\n    sampling_thereafter:\
+    \ 200\n  otlp:\n    endpoint: tempo.tempo.svc:4317\n    tls:\n      insecure:\
+    \ true\n      insecure_skip_verify: true\n  loki:\n    default_labels_enabled:\n\
+    \      exporter: false\n      job: true\n    endpoint: https://loki.apps.example.com/loki/api/v1/push\n\
+    \    tls:\n      insecure_skip_verify: true\n  otlphttp:\n    endpoint: https://loki.apps.example.com/otlp\n\
+    \    tls:\n      insecure_skip_verify: true\n  otlp/tempo2:\n    auth:\n     \
+    \ authenticator: bearertokenauth\n    endpoint: tempo-tempo-observe-gateway.tempo2.svc.cluster.local:8090\n\
+    \    tls:\n      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt\n\
+    \    headers:\n      X-Scope-OrgID: user\n\nconnectors:\n  spanmetrics:\n    dimensions:\n\
+    \      - name: k8s.namespace.name\n    metrics_flush_interval: 5s\n\nextensions:\n\
+    \  bearertokenauth:\n    filename: /var/run/secrets/kubernetes.io/serviceaccount/token\n\
+    \nprocessors:\n  k8sattributes: {}\n  #probabilistic_sampler:\n  #  sampling_percentage:\
+    \ 10\n  filter:\n    error_mode: ignore\n    traces:\n      span:\n        - status.code\
+    \ != 2\n  batch:\n  memory_limiter:\n    check_interval: 1s\n    limit_mib: 1000\n\
+    \    spike_limit_percentage: 10\n  attributes/loki:\n    actions:\n      - action:\
+    \ insert\n        key: loki.attribute.labels\n        value: service_name, service_namespace,\
+    \ application, hostname, host, level, facility, connection_hostname, trace_id,\
+    \ span_id, trace_flags\n      - action: insert\n        key: loki.format\n   \
+    \     value: raw\n\nservice:\n  extensions:\n    - bearertokenauth\n  telemetry:\n\
+    \    logs:\n      level: \"info\"\n  pipelines:\n    logs:\n      receivers: [syslog]\n\
+    \      processors: [memory_limiter,attributes/loki,batch]\n      exporters: [\
+    \ debug,loki ]\n    traces:\n      receivers: [otlp]\n      processors: [memory_limiter,batch]\n\
+    \      exporters: [ debug,otlp,otlp/tempo2 ]"
+kind: ConfigMap
+metadata:
+  name: collector

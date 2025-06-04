@@ -31,4 +31,4 @@ WORKDIR /opt/app
 ENV PROMETHEUS_MULTIPROC_DIR=/tmp
 ENV PYTHON_PATH=/opt/app
 ENTRYPOINT [ "/usr/bin/gunicorn" ]
-CMD [ "--pythonpath", "/usr/bin/python3.13", "--bind", "0.0.0.0:8080", "proxy:app_factory", "--worker-class", "aiohttp.GunicornWebWorker", "--workers", "8"]
+CMD [ "--pythonpath", "/usr/bin/python3.13", "--bind", "0.0.0.0:8080", "proxy:app_factory", "--worker-class", "aiohttp.GunicornWebWorker", "--access-logfile", "-"]

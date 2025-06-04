@@ -1,448 +1,67 @@
-#!/usr/bin/python3.13
-
-from aiohttp import web
-from aiohttp import client
-import aiohttp
+#!/usr/bin/python
 import asyncio
-import logging
-import json
 import base64
+import json
+import logging
 import os
-import urllib.parse
-from copy import deepcopy
-from time import time
-import traceback
 
-from collections import namedtuple
-from cerbos.sdk.grpc.client import CerbosClient as CerbosClientGRPC
+import aiohttp
+from aiohttp import client, web
+from multidict import MultiDict, MultiDictProxy
 
-from multidict import MultiDictProxy, MultiDict
-
-PAGESIZE = int(os.environ.get("PAGESIZE", 500))
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 10))
-TENANT_FILTER = "tenant"
-CERBOSAPI = urllib.parse.urlparse(os.environ.get("CERBOSAPI", "http://localhost:3593"))
-baseUrl = os.environ.get("PROMAPI", "http://127.0.0.1:9091")
-LEARNING = bool(int(os.environ.get("LEARNING", False)))
-
-
-from prompolicy.exceptions import (
-    PermissionDenied,
-    PromQLException,
-    Learning,
-    CerbosGRPCDown,
-)
-from prompolicy.utils.generators import adjust_headers, get_principal, b64encode
-from prompolicy.utils.generators import remap_results
+from prompolicy.exceptions import *
+from prompolicy.filters.cerbos import CerbosAPI
+from prompolicy.tracing import *
+from prompolicy.utils.generators import Metric2Cerbos, MetricsFactory
 from prompolicy.utils.logfilter import (
-    FilteredLogger,
     LF_BASE,
-    LF_WEB,
-    LF_RESPONSES,
     LF_MODEL,
     LF_POLICY,
+    LF_RESPONSES,
+    LF_WEB,
+    FilteredLogger,
 )
-from prompolicy.tenancy import require_tenancy, page_policy_resources, deduplicate
-from prompolicy.promstats import (
-    HTTP_REQUESTS_LATENCY,
-    HTTP_REQUESTS_TOTAL,
-    generate_metrics,
-)
-from prometheus_client import multiprocess, CollectorRegistry
+from prompolicy.utils.promql import PromQL, PromQL_safe
+from prompolicy.utils.promstats import generate_metrics, measure
+from prompolicy.utils.webrequests import adjust_headers, get_tenant, remap_results
 
 baselevel = logging.DEBUG if os.environ.get("DEBUG", False) else logging.INFO
 logger = FilteredLogger(__name__, baselevel=baselevel)
 
-registry = CollectorRegistry()
-multiprocess.MultiProcessCollector(registry)
+PROMURL = os.environ.get("PROMAPI", "http://127.0.0.1:9091")
+CERBOSAPI = os.environ.get("CERBOSAPI", "http://localhost:3593")
+
+instrument()
+tracer = trace.get_tracer("proxy")
 
 
-async def handler(req):
-    t_starttime = time()
-    slash = "" if req.path.startswith("/") else ""
-    logger.debug(f"Req path = {req.path}", LF_WEB)
+@web.middleware
+async def opentelemetry(request, handler):
+    _ctx = get_tracecontext()
 
-    def path_query(body):
-        jbody = json.loads(body.decode("utf8"))
-        try:
-            original = len(jbody.get("data", {}).get("result", []))
-            try:
-                if (
-                    jbody.get("data", {})
-                    .get("result", [{"metric": {}}])[0]
-                    .get("metric")
-                    == {}
-                ):
-                    return body
-            except Exception:
-                pass
-            if original > 0:
-                logger.error(f"page_policy_resources with action 'response'")
-                remove = list(
-                    map(
-                        lambda x: x,  # http version == x.resource.id
-                        page_policy_resources(
-                            deduplicate(
-                                map(
-                                    lambda y: remap_results(y),
-                                    jbody.get("data").get("result"),
-                                )
-                            ),
-                            tenant,
-                            "response",
-                        ),
-                    )
-                )
-                newresult = list(
-                    filter(
-                        lambda x: not b64encode(x) in remove,
-                        map(
-                            lambda y: remap_results(y, values=True),
-                            jbody.get("data").get("result"),
-                        ),
-                    )
-                )
-                if not LEARNING:
-                    jbody["data"]["result"] = newresult
-                if len(remove) > 0:
-                    logger.info(
-                        f"[{tenant.id}] removed {len(remove)} new {len(newresult)} original {original}",
-                        LF_BASE,
-                    )
-                if len(newresult) == 0:
-                    if LEARNING:
-                        raise Learning()
-                    raise PermissionDenied()
-                body = json.dumps(jbody).encode("utf8")
-                logger.debug(f"RESPONSE body {body}")
-        except Learning as permerr:
-            raise permerr
-        except PermissionDenied as permerr:
-            raise permerr
-        except Exception as proxyerr:
-            logger.error(f"{req.path} Exception {proxyerr}", LF_BASE)
-            traceback.print_exception(proxyerr)
-        return body
+    tracer = trace.get_tracer("aiohttp.server")
+    with tracer.start_as_current_span(
+        "aiohttp.handler", kind=trace.SpanKind.SERVER
+    ) as span:
+        return await handler(request)
 
-    def path_query_range(body):
-        jbody = json.loads(body.decode("utf8"))
-        try:
-            original = len(jbody.get("data", {}).get("result", []))
-            try:
-                if (
-                    jbody.get("data", {})
-                    .get("result", [{"metric": {}}])[0]
-                    .get("metric")
-                    == {}
-                ):
-                    return body
-            except:
-                pass
-            if original > 0:
-                logger.error(f"page_policy_resources with action 'response'", LF_MODEL)
-                remove = list(
-                    map(
-                        lambda x: x,  # http version == x.resource.id
-                        page_policy_resources(
-                            deduplicate(
-                                map(
-                                    lambda y: remap_results(y),
-                                    jbody.get("data").get("result"),
-                                )
-                            ),
-                            tenant,
-                            "response",
-                        ),
-                    )
-                )
-                newresult = list(
-                    filter(
-                        lambda x: not b64encode(x) in remove,
-                        map(
-                            lambda y: remap_results(y, values=True),
-                            jbody.get("data").get("result"),
-                        ),
-                    )
-                )
-                if not LEARNING:
-                    jbody["data"]["result"] = newresult
-                if len(remove) > 0:
-                    logger.info(
-                        f"[{tenant.id}] removed {len(remove)} new {len(newresult)} original {original}",
-                        LF_BASE,
-                    )
-                if len(newresult) == 0:
-                    if LEARNING:
-                        raise Learning()
-                    raise PermissionDenied()
-                body = json.dumps(jbody).encode("utf8")
-                logger.debug(f"RESPONSE body {body}")
-        except Learning as permerr:
-            raise permerr
-        except PermissionDenied as permerr:
-            raise permerr
-        except Exception as proxyerr:
-            logger.error(f"{req.path} Exception {proxyerr}", LF_BASE)
-        return body
 
-    def path_label_values(body):
-        return body
-        jbody = json.loads(body.decode("utf8"))
-
-        try:
-            logger.info(f"path_label_values {len(body)}", LF_MODEL)
-            original = len(jbody.get("data"))
-            if original > 0:
-                remove = list(
-                    map(
-                        lambda x: json.loads(base64.b64decode(x))
-                        .get("metric", {})
-                        .get("__name__"),  # http version == x.resource.id,
-                        page_policy_resources(
-                            list(
-                                map(
-                                    lambda x: {"metric": {"__name__": x}},
-                                    jbody.get("data"),
-                                )
-                            ),
-                            tenant,
-                            action="read",
-                        ),
-                    )
-                )
-                newresult = list(
-                    filter(
-                        lambda x: not x in remove,
-                        jbody.get("data"),
-                    )
-                )
-                logger.info(f"path_label_values {len(newresult)}")
-                if not LEARNING:
-                    jbody["data"] = newresult
-                if len(remove) > 0:
-                    logger.info(
-                        f"LabelValues [{tenant.id}] removed {len(remove)} new {len(newresult)} original {original}",
-                        LF_BASE,
-                    )
-                if len(newresult) == 0:
-                    if LEARNING:
-                        raise Learning()
-                    raise PermissionDenied()
-                body = json.dumps(jbody).encode("utf8")
-        except Learning as permerr:
-            raise permerr
-        except PermissionDenied as permerr:
-            raise permerr
-        except Exception as proxyerr:
-            logger.error(f"{req.path} Exception {proxyerr}", LF_BASE)
-        return body
-
-    def path_tenant_values(body):
-        jbody = json.loads(body.decode("utf8"))
-
-        try:
-            original = len(jbody.get("data"))
-            if original > 0:
-                remove = list(
-                    map(
-                        lambda x: x,  # http version == x.resource.id,
-                        page_policy_resources(jbody.get("data"), tenant),
-                    )
-                )
-                newresult = list(
-                    filter(
-                        lambda x: not b64encode(x) in remove,
-                        jbody.get("data"),
-                    )
-                )
-                if not LEARNING:
-                    jbody["data"] = newresult
-                if len(remove) > 0:
-                    logger.info(
-                        f"[{tenant.id}] removed {len(remove)} new {len(newresult)} original {original}",
-                        LF_BASE,
-                    )
-                if len(newresult) == 0:
-                    if not LEARNING:
-                        raise Learning()
-                    raise PermissionDenied()
-                body = json.dumps(jbody).encode("utf8")
-        except Learning as permerr:
-            raise permerr
-        except PermissionDenied as permerr:
-            raise permerr
-        except Exception as proxyerr:
-            logger.error(f"{req.path} Exception {proxyerr}", LF_BASE)
-        return body
-
-    reqdata = await req.post()
-    if any(
-        [
-            str(req.path)
-            in (
-                "/api/v1/metadata",
-                "/-/healthy",
-                "-/ready",
-                "/api/v1/status/buildinfo",
-            ),
-            str(req.path).startswith("/api/v1/label"),
-        ]
-    ):
-        logger.info(f"Whitelist for {req.path}", LF_WEB)
-        tenant, data = get_principal("anonymous-allowed"), reqdata
-
-    try:
-        tenant, data = require_tenancy(reqdata, req)
-    except PromQLException as pqlerr:
-        logger.error(f"Proxy1 PromQLException {pqlerr}", LF_BASE)
-        logger.error(f"reqdata = {await req.post()}", LF_MODEL)
-        return web.Response(status=pqlerr.code, body=pqlerr.msg)
-    except Learning:
-        logger.error(
-            f"PermissionDenied require valid Tenant {req} {dict(req.query.copy())} {dict(reqdata)}",
-            LF_BASE,
-        )
-    except PermissionDenied as permerr:
-        logger.error(
-            f"PermissionDenied require valid Tenant {req} {dict(req.query.copy())} {dict(reqdata)}",
-            LF_BASE,
-        )
-        return web.Response(status=permerr.code, body=permerr.msg)
-    except CerbosGRPCDown as permerr:
-        logger.error(f"Cerbos GRPC down {permerr}", LF_BASE)
-        return web.Response(status=permerr.code, body=permerr.msg)
-    except Exception as err:
-        traceback.print_exception(err)
-    try:
-        params = req.query.copy()
-    except Exception as parerr:
-        logger.error(f"Params query Exception {parerr}", LF_BASE)
-
-    reqparams = {
-        "method": req.method,
-        "url": f"{baseUrl}{slash}{str(req.path)}",
-        "allow_redirects": True,
-        "ssl": False,
-    }
-
-    if req.query == MultiDictProxy(MultiDict()):
-        if data != None:
-            reqparams["data"] = (
-                urllib.parse.urlencode(dict(data)).encode("utf8")
-                if data != MultiDictProxy(MultiDict())
-                else MultiDictProxy(MultiDict())
-            )
-            if reqparams["data"] == MultiDictProxy(MultiDict()):
-                del reqparams["data"]
-    elif await req.read() in [b"", MultiDictProxy(MultiDict())]:
-        reqparams["params"] = (
-            params
-            if req.query.get("query") != MultiDictProxy(MultiDict())
-            else MultiDictProxy(MultiDict())
-        )
-        if reqparams["params"] == MultiDictProxy(MultiDict()):
-            del reqparams["params"]
-
-    if all(
-        [
-            reqparams.get("params", False) not in (False, MultiDictProxy(MultiDict())),
-            reqparams.get("data", False) not in (False, MultiDictProxy(MultiDict())),
-            req.headers.get("Content-Type") == "application/x-www-form-urlencoded",
-        ]
-    ):
-        logger.debug(f"reqparams {reqparams}", LF_MODEL)
-        del reqparams["params"]
-
-    reqparams["headers"] = adjust_headers(req.headers)
-
-    starttime = time()
-    async with client.request(**reqparams) as res:
-        body = await res.read()
-        logger.info(
-            f"[{tenant.id}] response from upstream {reqparams.get('url')} {res.status}",
-            LF_WEB,
-        )
-        logger.debug(f"upstream response {body}", LF_RESPONSES)
-        status = res.status
-        headers = adjust_headers(res.headers.copy())
-        if res.status >= 300:
-            logger.debug(f"upstrem response {body}", LF_RESPONSES)
-            logger.debug(f"recieved from downstream {await req.post()}", LF_RESPONSES)
-            status = res.status
-        if req.path == "/api/v1/query":
-            try:
-                body = path_query(body)
-                status = res.status
-            except Learning as permerr:
-                status = res.status
-            except PermissionDenied as permerr:
-                status = permerr.code
-                body = permerr.msg
-            except Exception as err:
-                traceback.print_exception(err)
-            headers = adjust_headers(res.headers.copy())
-            # ToDO
-            # elif req.path.startswith("/api/v1/label"):
-            #    headers = adjust_headers(res.headers.copy())
-            #    status = res.status
-            #    logger.debug(f"buildinfo downstream response {body}", LF_L4)
-            # elif req.path == "/api/v1/metadata":
-            #    try:
-            #        body = path_label_values(body)
-            #        status = res.status
-            #    except Learning as permerr:
-            #        status = res.status
-            #    except PermissionDenied as permerr:
-            #        status = permerr.code
-            #        body = permerr.msg
-            #    headers = adjust_headers(res.headers.copy())
-        elif req.path == "/api/v1/query_range":
-            try:
-                body = path_query_range(body)
-                status = res.status
-            except Learning as permerr:
-                status = res.status
-            except PermissionDenied as permerr:
-                status = permerr.code
-                body = permerr.msg
-            except Exception as err:
-                traceback.print_exception(err)
-            headers = adjust_headers(res.headers.copy())
-            # elif req.path == "/api/v1/status/buildinfo":
-            #    headers = adjust_headers(res.headers.copy())
-            #    status = res.status
-            #    logger.debug(f"buildinfo downstream response {body}", LF_L4)
-            # else:
-            #    headers = adjust_headers(res.headers.copy())
-            #    body = await res.read()
-            #    status = res.status
-        # logger.debug(f"downstream response {body}", LF_RESPONSES)
-        stoptime = time()
-        HTTP_REQUESTS_LATENCY.labels(
-            tenant.id, req.method, req.path, "", baseUrl
-        ).observe(
-            stoptime - starttime  # , {"trace_id": traceid}
-        )
-        HTTP_REQUESTS_LATENCY.labels(
-            tenant.id, req.method, req.path, req.remote, ""
-        ).observe(
-            stoptime - t_starttime  # , {"trace_id": traceid}
-        )
-        HTTP_REQUESTS_TOTAL.labels(
-            tenant.id, req.method, req.path, req.remote, baseUrl
-        ).inc()
-        return web.Response(
-            status=status,
-            headers=headers,
-            body=body,
-        )
+async def metrics(req):
+    return web.Response(
+        status=200,
+        headers={
+            "Content-Type": "application/openmetrics-text",
+            "MimeType": "application/openmetrics-text",
+        },
+        body=generate_metrics(),
+    )
 
 
 async def health(req):
     try:
         async with client.request(
             "GET",
-            f"{baseUrl}/-/healthy",
+            f"{PROMURL}/-/healthy",
             allow_redirects=True,
             ssl=True,
         ) as res:
@@ -459,11 +78,8 @@ async def health(req):
         )
 
     try:
-        if CERBOSAPI.scheme == "grpc":
-            with CerbosClientGRPC(CERBOSAPI.netloc, tls_verify=False) as cerb:
-                resp = cerb.server_info()
-            with CerbosClient(host=CERBOSAPI.geturl()) as cerb:
-                resp = cerb.is_healthy()
+        cerb = CerbosAPI(CERBOSAPI).is_healthy
+        logger.error(f"CerbosAPI {cerb}")
     except Exception as cerberr:
         logger.error(f"HealthState Cerbos not healthy {cerberr}")
         return web.Response(
@@ -473,25 +89,272 @@ async def health(req):
     return web.Response(status=200, body="OK")
 
 
-async def metrics(req):
-    return web.Response(
-        status=200,
-        headers={
-            "Content-Type": "application/openmetrics-text; version=1.0.0; charset=utf-8",
-            "MimeType": "application/openmetrics-text; version=1.0.0; charset=utf-8",
-        },
-        body=generate_metrics(registry),
-    )
+async def parsequeries(data, tenant, action, _ctx):
+    if data == None:
+        return data
+    try:
+        metric = Metric2Cerbos(PromQL.parse(data.get("query")), tenant, action)
+    except PromQLException:
+        return data
+    api = CerbosAPI(CERBOSAPI, tenant=tenant, action=action, tracecontext=_ctx)
+    for perr in api.filter(metric):
+        # logger.error(f"Permission Denied {tenant.name} {action}")
+        raise PermissionDenied()
+    return data
+
+
+async def parseresponse(data, tenant, action, reqparams, _ctx):
+    try:
+        names = PromQL.parse(reqparams.get("data").get("query")).get_names()
+    except Exception as perr:
+        print(f"cannot parse reqparams query {perr}")
+        print(f"{reqparams}")
+        names = []
+    if data == None:
+        return data
+    try:
+        mdata = json.loads(data).get("data", False)
+        if mdata == False:
+            mdata = json.loads(data).get("result")
+    except Exception:
+        return data
+    if isinstance(mdata, list):
+        # do not check on labels all the time 2k+ queries
+        return data
+    else:
+        try:
+            rspdata = MetricsFactory.from_dict(
+                remap_results(mdata.get("result"), names=names)
+            )
+        except AttributeError as err:
+            print(f"AttributeError for metrics on result {err}")
+            return data
+        except Exception as err:
+            print(f"Exception for metrics on result {err}")
+            print(mdata)
+    api = CerbosAPI(CERBOSAPI, tenant=tenant, action=action, tracecontext=_ctx)
+    removes = list(api.paged_filter(rspdata, page_size=500, workers=10))
+    newdata = []
+    with tracer.start_as_current_span(
+        "filtering",
+        #        context=_ctx,
+    ) as span:
+        try:
+            for x in mdata.get("result"):
+                if x.get("metric", {}) == {}:
+                    newdata.append(x)
+                    continue
+                try:
+                    xx = x.get("metric")
+                    xx["name"] = xx["__name__"]
+                    del xx["__name__"]
+                except Exception as xe:
+                    xx = x.get("metric")
+                if any(
+                    [
+                        rspdata.b64response(x.get("metric")) not in removes,
+                        rspdata.b64response(xx) not in removes,
+                    ]
+                ):
+                    newdata.append(x)
+                else:
+                    span.add_event("removing", attributes=x.get("metric"))
+        except Exception as err:
+            print(f"Exception {err} parsing mdata.result")
+            print(f"mdata = {mdata}")
+            # !!ToDo label list parsing and return here
+            return data
+    if len(mdata.get("result")) != len(newdata):
+        print(
+            f"Tenant {tenant.name} roles {','.join(tenant.groups)} action {action}"
+            + f"Original {len(mdata.get('result'))} Removed {len(removes)} New {len(newdata)}"
+        )
+    if all([len(removes) != 0, len(newdata) == 0]):
+        for r in removes:
+            print(f"removed {x.get('metric')}")
+        raise PermissionDenied()
+    if isinstance(mdata, list):
+        mdata = list(map(lambda x: x.get("name"), newdata))
+    else:
+        mdata["result"] = newdata
+    return json.dumps({"status": "success", "data": mdata})
+
+
+@get_tenant
+@measure
+async def handler(req, tenant=None):
+    status = 200
+    try:
+        ### build proxy request ###
+        reqparams = {
+            "method": req.method,
+            "url": f"{PROMURL}{str(req.path)}",
+            "allow_redirects": True,
+            "ssl": False,
+        }
+        _reqdata = await req.post()
+        reqdata = _reqdata.copy()
+        reqquery = req.query.copy()
+
+        _ctx = get_tracecontext(headers=req.headers.copy())
+        with tracer.start_as_current_span(
+            "downstream request",
+            #            context=_ctx,
+        ) as span:
+            _sctx = span.get_span_context()
+            traceparent = f"00-{hex(_sctx.trace_id)[2:]}-{hex(_sctx.span_id)[2:]}-0{hex(_sctx.trace_flags)[2:]}"
+            reqparams["headers"] = adjust_headers(req.headers.copy())
+            span.set_attribute("method", reqparams["method"])
+            span.set_attribute("url", reqparams["url"])
+            span.set_status(StatusCode.OK)
+            ### filter request queries ###
+            if not reqdata in (None, MultiDict()):
+                try:
+                    newdata = await parsequeries(reqdata, tenant, "read", _ctx)
+                    reqparams["data"] = reqdata
+                except PermissionDenied as perr:
+                    headers = reqparams["headers"]
+                    TraceContextTextMapPropagator().inject(headers, _ctx)
+                    logger.error(
+                        f"Permission Denied {tenant.name} action=read", _ctx=_sctx
+                    )
+                    return web.Response(
+                        body=perr.msg, status=perr.code, headers=headers
+                    )
+
+            if not reqquery in (None, MultiDict()):
+                try:
+                    newdata = await parsequeries(reqquery, tenant, "read", _ctx)
+                    reqparams["params"] = reqquery
+                except PermissionDenied as perr:
+                    headers = reqparams["headers"]
+                    span.set_status(StatusCode.ERROR)
+                    span.record_exception(perr)
+                    TraceContextTextMapPropagator().inject(headers, _ctx)
+                    logger.error(
+                        f"Permission Denied {tenant.name} action=action", _ctx=_sctx
+                    )
+                    return web.Response(
+                        body=perr.msg, headers=headers, status=perr.code
+                    )
+            # need to populate context for upstream
+            _sctx = span.get_span_context()
+            reqparams["headers"][
+                "traceparent"
+            ] = f"00-{hex(_sctx.trace_id)[2:]}-{hex(_sctx.span_id)[2:]}-0{hex(_sctx.trace_flags)[2:]}"
+            span.add_event(
+                f"upstream request to {PROMURL}", attributes=params_to_trace(reqparams)
+            )
+            async with client.request(**reqparams) as resp:
+                _ctx = get_tracecontext(headers=resp.headers.copy())
+                with tracer.start_as_current_span(
+                    "upstream request",
+                    #       context=_ctx,
+                ) as uspan:
+                    body = await resp.read()
+                    headers = resp.headers.copy()
+                    try:
+                        data = await parseresponse(
+                            body, tenant, "response", reqparams, _ctx
+                        )
+                    except PermissionDenied as perr:
+                        print(
+                            f"Request {reqparams.get('data')} {reqparams.get('query')}"
+                        )
+                        span.set_status(StatusCode.ERROR)
+                        uspan.set_status(StatusCode.ERROR)
+                        uspan.set_status(StatusCode.ERROR)
+                        uspan.record_exception(error)
+                        data = perr.msg
+                        status = perr.code
+                    uspan.set_status(StatusCode.OK)
+                    headers = TraceContextTextMapPropagator().inject(
+                        dict(headers), _ctx
+                    )
+                    if headers == None:
+                        headers = resp.headers.copy()
+                        _ctx = uspan.get_span_context()
+                        headers["traceparent"] = (
+                            f"00-{hex(_ctx.trace_id)[2:]}-{hex(_ctx.span_id)[2:]}-0{hex(_ctx.trace_flags)[2:]}"
+                        )
+
+                    return web.Response(
+                        status=status,
+                        headers=adjust_headers(headers),
+                        body=data,
+                    )
+    except Exception as perr:
+        return web.Response(
+            status=503,
+            body=str(perr),
+        )
+
+
+async def handler2(req):
+    status = 200
+    try:
+        ### build proxy request ###
+        reqparams = {
+            "method": req.method,
+            "url": f"{PROMURL}{str(req.path)}",
+            "allow_redirects": True,
+            "ssl": False,
+        }
+        _reqdata = await req.post()
+        reqdata = _reqdata.copy()
+        reqquery = req.query.copy()
+
+        reqparams["headers"] = adjust_headers(req.headers.copy())
+        ### filter request queries ###
+        if not reqdata in (None, MultiDict()):
+            try:
+                reqparams["data"] = reqdata
+            except PermissionDenied as perr:
+                return web.Response(body=perr.msg, status=perr.code)
+
+        if not reqquery in (None, MultiDict()):
+            try:
+                reqparams["params"] = reqquery
+            except PermissionDenied as perr:
+                return web.Response(body=perr.msg, status=perr.code)
+
+        ### built proxy request ###
+
+        async with client.request(**reqparams) as resp:
+            body = await resp.read()
+            try:
+                data = body
+            except PermissionDenied as perr:
+                print(f"Request {reqparams.get('data')} {reqparams.get('query')}")
+                data = perr.msg
+                status = perr.code
+            headers = resp.headers.copy()
+            return web.Response(
+                status=status,
+                headers=adjust_headers(headers),
+                body=data,
+            )
+    except Exception as perr:
+        return web.Response(status=503, body=str(perr))
 
 
 async def app_factory():
-    app = web.Application()
+    app = web.Application(middlewares=[opentelemetry])
     app.router.add_route("*", "/health", health)
     app.router.add_route("GET", "/metrics", metrics)
-    app.router.add_route("*", "/{tail:.*}", handler)
+    app.router.add_route("*", "/api/v1/labels", handler2)
+    app.router.add_route("*", "/api/v1/series", handler2)
+    app.router.add_route("*", "/api/v1/metadata", handler2)
+    app.router.add_route("*", "/api/v1/query", handler)
+    app.router.add_route("*", "/api/v1/query_range", handler)
+    app.router.add_route("*", "/api/v1/label{tail:.*}", handler2)
+    app.router.add_route("*", "/api/v1/parse_query", handler)
+    app.router.add_route("*", "/api/v1/status/buildinfo", handler2)
+    app.router.add_route("*", "/api/v1/query_exemplars", handler2)
+    # app.router.add_route("*", "/{tail:.*}", handler)
     return app
 
 
 if __name__ == "__main__":
-    print(f"Running on {CERBOSAPI}")
+    print(f"Running on {os.environ.get('CERBOSAPI', 'http://localhost:3593')}")
     web.run_app(app_factory(), port=int(os.environ.get("PORT", 3985)))

@@ -1,6 +1,13 @@
 import logging
 import os
+import socket
 from collections import defaultdict
+from functools import wraps
+
+import rfc5424logging
+from rfc5424logging import Rfc5424SysLogHandler
+
+from ..tracing import *
 
 LF_BASE, LF_WEB, LF_POLICY, LF_MODEL, LF_RESPONSES = range(5)
 
@@ -9,6 +16,18 @@ logging.basicConfig(
 )
 
 levels = defaultdict(bool)
+
+syslog = Rfc5424SysLogHandler(
+    address=("127.0.0.1", 50514),
+    socktype=socket.SOCK_DGRAM,
+    facility=rfc5424logging.LOG_DAEMON,
+    hostname=socket.gethostname(),
+    appname="prompolicy",
+    procid=os.getpid(),
+)
+
+syslog.setLevel(logging.DEBUG)
+tracer = trace.get_tracer("proxy")
 
 try:
     for n in range(int(os.environ.get("DEBUG", 0))):
@@ -22,29 +41,39 @@ class FilteredLogger(object):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(baselevel)
         self.levels = levels
+        self.logger.addHandler(syslog)
         # initialize default level
         self.levels[0] = True
 
-    def info(self, message, level=0):
-        if message is None:
-            return
-        if self.levels[level] == True:
-            self.logger.info(message)
+    def enhance(self, message: str, _ctx=None) -> str:
+        try:
+            traceparent = f"00-{hex(_ctx.trace_id)[2:]}-{hex(_ctx.span_id)[2:]}-01"
+        except Exception as perr:
+            print(f"enhance Exception {perr} {type(_ctx)}")
+            traceparent = ""
+        message += f"#{traceparent}"
+        return message
 
-    def debug(self, message, level=0):
+    def info(self, message: str, level: int = 0, _ctx=None) -> None:
         if message is None:
             return
         if self.levels[level] == True:
-            self.logger.debug(message)
+            self.logger.info(self.enhance(message, _ctx))
 
-    def warning(self, message, level=0):
+    def debug(self, message: str, level: int = 0, _ctx=None) -> None:
         if message is None:
             return
         if self.levels[level] == True:
-            self.logger.warning(message)
+            self.logger.debug(self.enhance(message, _ctx))
 
-    def error(self, message, level=0):
+    def warning(self, message: str, level: int = 0, _ctx=None) -> None:
         if message is None:
             return
         if self.levels[level] == True:
-            self.logger.error(message)
+            self.logger.warning(self.enhance(message, _ctx))
+
+    def error(self, message: str, level: int = 0, _ctx=None) -> None:
+        if message is None:
+            return
+        if self.levels[level] == True:
+            self.logger.error(self.enhance(message, _ctx))

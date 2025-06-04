@@ -8,7 +8,7 @@ metadata:
   name: prom-policy
 spec:
   progressDeadlineSeconds: 10
-  replicas: 3
+  replicas: 1
   revisionHistoryLimit: 0
   selector:
     matchLabels:
@@ -41,11 +41,11 @@ spec:
             - name: CERBOSAPI
               value: grpc://127.0.0.1:3593
             - name: AUTH_HEADER
-              value: "X-Tenant-Id"
+              value: "x-id-token"
             - name: PROMAPI
-              value: https://prometheus.apps.example.com
-          image: localhost/prom-authz:v1.0.0
-          imagePullPolicy: IfNotPresent
+              value: https://prometheus-k8s.openshift-monitoring.svc.cluster.local:9091
+          image: localhost/prom-authz:v2.0.0
+          imagePullPolicy: Always
           name: prom-policy
           ports:
             - containerPort: 8080
@@ -104,6 +104,28 @@ spec:
               name: tmp
             - mountPath: /.cache
               name: cache
+        - args:
+            - --config=/config/collector.yml
+          image: quay.chester.at/otel/opentelemetry-collector-contrib:0.121.0
+          imagePullPolicy: Always
+          name: otel
+          ports:
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+            - containerPort: 50514
+              protocol: TCP
+            - containerPort: 50514
+              protocol: UDP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /config/collector.yml
+              name: collector
+              readOnly: true
+              subPath: collector.yml
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
@@ -120,3 +142,8 @@ spec:
           name: tmp
         - emptyDir: {}
           name: cache
+        - configMap:
+            defaultMode: 420
+            name: collector
+            optional: true
+          name: collector

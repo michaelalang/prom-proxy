@@ -1,10 +1,10 @@
 #!/bin/bash
-API=${API:-"https://perses.apps.example.com/api/v1/"}
-echo "API ${API}"
+API=https://perses.apps.example.com/api/v1/
 curl -k -X POST -d @project.json -H "Content-Type: application/json" ${API}projects
 
 for src in $(ls datasource*) ; do 
-    curl -k -X POST -d @${src} -H "Content-Type: application/json" ${API}globaldatasources
+    export token=$(oidc -u $(basename -s .json ${src} | cut -f2 -d'-'))
+    curl -k -X POST -d "$(envsubst < ${src})" -H "Content-Type: application/json" ${API}globaldatasources
 done
 
 for dash in $(ls dashboard*) ; do 
