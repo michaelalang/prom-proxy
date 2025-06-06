@@ -146,7 +146,7 @@ async def parseresponse(data, tenant, action, reqparams, _ctx):
                     continue
                 try:
                     xx = x.get("metric")
-                    xx["name"] = xx["__name__"]
+                    xx["name"] = xx.get("__name__", names[0])
                     del xx["__name__"]
                 except Exception as xe:
                     xx = x.get("metric")
