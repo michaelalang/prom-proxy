@@ -39,7 +39,7 @@ def adjust_headers(headers: Dict) -> Dict:
         try:
             del reqheaders[h]
         except Exception as e:
-            pass
+            logger.debug("Cannot delete header {h}", level=999)
     return reqheaders
 
 
@@ -86,10 +86,10 @@ def get_tenant(func) -> web.Response | MetricPrincipal:
                     headers.get("x-id-token"), headers.get("Authorization")
                 )
                 span.set_status(StatusCode.OK)
-            except MetricPrincipalException as e:
+            except MetricPrincipalException as error:
                 span.set_status(StatusCode.ERROR)
                 span.record_exception(error)
-                return web.Response(body=e.msg, status=e.code)
+                return web.Response(body=error.msg, status=error.code)
             rsp = func(req, tenant, span)
             return rsp
 

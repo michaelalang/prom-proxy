@@ -109,7 +109,7 @@ class MetricsFactory(object):
                 try:
                     yield Metric2Cerbos(PromQL.parse(x))
                 except Exception:
-                    pass
+                    logger.error(f"invalid PromQL {x}")
 
         return MetricsFactory(metrics=list(mapper(metrics)))
 

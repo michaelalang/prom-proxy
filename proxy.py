@@ -71,7 +71,7 @@ async def health(req):
                     body=res.body,
                 )
     except Exception as promerr:
-        logger.error(f"HealthState Prometheus not healthy {promerr}")
+        logger.error(f"HealthState Prometheus not healthy {promerr}", level=0)
         return web.Response(
             status=503,
             body=str(promerr),
@@ -79,9 +79,9 @@ async def health(req):
 
     try:
         cerb = CerbosAPI(CERBOSAPI).is_healthy
-        logger.error(f"CerbosAPI {cerb}")
+        logger.error(f"CerbosAPI {cerb}", level=0)
     except Exception as cerberr:
-        logger.error(f"HealthState Cerbos not healthy {cerberr}")
+        logger.error(f"HealthState Cerbos not healthy {cerberr}", level=0)
         return web.Response(
             status=503,
             body=str(cerberr),
@@ -107,8 +107,8 @@ async def parseresponse(data, tenant, action, reqparams, _ctx):
     try:
         names = PromQL.parse(reqparams.get("data").get("query")).get_names()
     except Exception as perr:
-        print(f"cannot parse reqparams query {perr}")
-        print(f"{reqparams}")
+        logger.error(f"cannot parse reqparams query {perr}", level=0, _ctx=_ctx)
+        logger.error(f"{reqparams}", level=1, _ctx=_ctx)
         names = []
     if data == None:
         return data
@@ -127,17 +127,24 @@ async def parseresponse(data, tenant, action, reqparams, _ctx):
                 remap_results(mdata.get("result"), names=names)
             )
         except AttributeError as err:
-            print(f"AttributeError for metrics on result {err}")
+            logger.error(
+                f"AttributeError for metrics on result {err}", level=0, _ctx=_ctx
+            )
             return data
         except Exception as err:
-            print(f"Exception for metrics on result {err}")
-            print(mdata)
+            logger.error(f"Exception for metrics on result {err}", level=0, _ctx=_ctx)
+            logger.debug(mdata, level=1, _ctx=_ctx)
     api = CerbosAPI(CERBOSAPI, tenant=tenant, action=action, tracecontext=_ctx)
     removes = list(api.paged_filter(rspdata, page_size=500, workers=10))
     newdata = []
     with tracer.start_as_current_span(
         "filtering",
         #        context=_ctx,
+        attributes={
+            "tenant": tenant.name,
+            "action": action,
+            "groups": ",".join(tenant.groups),
+        },
     ) as span:
         try:
             for x in mdata.get("result"):
@@ -159,20 +166,25 @@ async def parseresponse(data, tenant, action, reqparams, _ctx):
                     newdata.append(x)
                 else:
                     span.add_event("removing", attributes=x.get("metric"))
+                    span.set_status(StatusCode.ERROR)
         except Exception as err:
-            print(f"Exception {err} parsing mdata.result")
-            print(f"mdata = {mdata}")
+            logger.error(f"Exception {err} parsing mdata.result", level=0, _ctx=_ctx)
+            logger.debug(f"mdata = {mdata}", level=1, _ctx=_ctx)
             # !!ToDo label list parsing and return here
             return data
-    if len(mdata.get("result")) != len(newdata):
-        print(
-            f"Tenant {tenant.name} roles {','.join(tenant.groups)} action {action}"
-            + f"Original {len(mdata.get('result'))} Removed {len(removes)} New {len(newdata)}"
-        )
-    if all([len(removes) != 0, len(newdata) == 0]):
-        for r in removes:
-            print(f"removed {x.get('metric')}")
-        raise PermissionDenied()
+        if len(mdata.get("result")) != len(newdata):
+            logger.info(
+                f"Tenant {tenant.name} roles {','.join(tenant.groups)} action {action} "
+                + f"Original {len(mdata.get('result'))} Removed {len(removes)} New {len(newdata)}",
+                level=0,
+                _ctx=span,
+            )
+            span.set_status(StatusCode.ERROR)
+        if all([len(removes) != 0, len(newdata) == 0]):
+            for r in removes:
+                logger.info(f"removed {x.get('metric')}", level=0, _ctx=span)
+            span.set_status(StatusCode.ERROR)
+            raise PermissionDenied()
     if isinstance(mdata, list):
         mdata = list(map(lambda x: x.get("name"), newdata))
     else:
@@ -200,6 +212,10 @@ async def handler(req, tenant=None):
         with tracer.start_as_current_span(
             "downstream request",
             #            context=_ctx,
+            attributes={
+                "tenant": tenant.name,
+                "source": req.headers.get("x-forwarded-for", "127.0.0.1"),
+            },
         ) as span:
             _sctx = span.get_span_context()
             traceparent = f"00-{hex(_sctx.trace_id)[2:]}-{hex(_sctx.span_id)[2:]}-0{hex(_sctx.trace_flags)[2:]}"
@@ -215,8 +231,11 @@ async def handler(req, tenant=None):
                 except PermissionDenied as perr:
                     headers = reqparams["headers"]
                     TraceContextTextMapPropagator().inject(headers, _ctx)
+                    span.set_status(StatusCode.ERROR)
                     logger.error(
-                        f"Permission Denied {tenant.name} action=read", _ctx=_sctx
+                        f"Permission Denied {tenant.name} action=read",
+                        level=0,
+                        _ctx=_sctx,
                     )
                     return web.Response(
                         body=perr.msg, status=perr.code, headers=headers
@@ -232,7 +251,9 @@ async def handler(req, tenant=None):
                     span.record_exception(perr)
                     TraceContextTextMapPropagator().inject(headers, _ctx)
                     logger.error(
-                        f"Permission Denied {tenant.name} action=action", _ctx=_sctx
+                        f"Permission Denied {tenant.name} action=read",
+                        level=0,
+                        _ctx=_sctx,
                     )
                     return web.Response(
                         body=perr.msg, headers=headers, status=perr.code
@@ -250,6 +271,13 @@ async def handler(req, tenant=None):
                 with tracer.start_as_current_span(
                     "upstream request",
                     #       context=_ctx,
+                    attributes={
+                        "tenant": tenant.name,
+                        "action": "response",
+                        "groups": ",".join(tenant.groups),
+                        "upstream": reqparams["url"],
+                        "method": reqparams["method"],
+                    },
                 ) as uspan:
                     body = await resp.read()
                     headers = resp.headers.copy()
@@ -258,8 +286,10 @@ async def handler(req, tenant=None):
                             body, tenant, "response", reqparams, _ctx
                         )
                     except PermissionDenied as perr:
-                        print(
-                            f"Request {reqparams.get('data')} {reqparams.get('query')}"
+                        logger.error(
+                            f"Request {reqparams.get('data')} {reqparams.get('query')}",
+                            level=0,
+                            _ctx=_ctx,
                         )
                         span.set_status(StatusCode.ERROR)
                         uspan.set_status(StatusCode.ERROR)
@@ -325,7 +355,11 @@ async def handler2(req):
             try:
                 data = body
             except PermissionDenied as perr:
-                print(f"Request {reqparams.get('data')} {reqparams.get('query')}")
+                logger.error(
+                    f"Request {reqparams.get('data')} {reqparams.get('query')}",
+                    level=0,
+                    _ctx=_ctx,
+                )
                 data = perr.msg
                 status = perr.code
             headers = resp.headers.copy()

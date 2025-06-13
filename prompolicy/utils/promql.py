@@ -259,7 +259,7 @@ class PromQL(object):
             try:
                 labels.update(label.to_dict())
             except:
-                pass
+                logger.debug(f"cannot convert label to dict {label}", level=999)
 
         for label in map(lambda x: x.to_dict(), self.matchers):
             labels.update(label)

@@ -5,6 +5,7 @@ __all__ = [
     "trace",
     "params_to_trace",
     "TraceContextTextMapPropagator",
+    "Context",
 ]
 import logging
 import os

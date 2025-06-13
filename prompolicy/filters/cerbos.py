@@ -130,6 +130,11 @@ class CerbosAPI(PromFilter):
         with tracer.start_as_current_span(
             "Cerbos Call",
             # context=self._ctx,
+            attributes={
+                "tenant": self.tenant.name,
+                "action": self.action,
+                "groups": ','.join(self.tenant.groups),
+                },
         ) as span:
             _ctx = span.get_span_context()
             self.traceparent = hex(_ctx.trace_id)[2:]
@@ -148,6 +153,7 @@ class CerbosAPI(PromFilter):
                     ),
                 )
                 for r in iterater_response(resp, span):
+                    span.set_status(StatusCode.ERROR)
                     yield r.resource.id
                 # for r in list(
                 #    map(

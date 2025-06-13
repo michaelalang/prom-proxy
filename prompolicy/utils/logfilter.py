@@ -33,7 +33,7 @@ try:
     for n in range(int(os.environ.get("DEBUG", 0))):
         levels[n] = True
 except:
-    pass
+    print(f"Cannot set log levels")
 
 
 class FilteredLogger(object):
@@ -47,10 +47,20 @@ class FilteredLogger(object):
 
     def enhance(self, message: str, _ctx=None) -> str:
         try:
-            traceparent = f"00-{hex(_ctx.trace_id)[2:]}-{hex(_ctx.span_id)[2:]}-01"
+            try:
+                traceparent = f"00-{hex(_ctx.trace_id)[2:]}-{hex(_ctx.span_id)[2:]}-01"
+            except:
+                traceparent = f"00-{hex(_ctx.context.trace_id)[2:]}-{hex(_ctx.context.span_id)[2:]}-01"
         except Exception as perr:
-            print(f"enhance Exception {perr} {type(_ctx)}")
-            traceparent = ""
+            try:
+                span = trace.get_current_span()
+                _span = span.get_span_context()
+                traceparent = (
+                    f"00-{hex(_span.trace_id)[2:]}-{hex(_span.span_id)[2:]}-01"
+                )
+            except Exception as perr:
+                self.logger.error(f"enhance Exception _ctx {perr} {type(_ctx)}")
+                traceparent = ""
         message += f"#{traceparent}"
         return message
 
