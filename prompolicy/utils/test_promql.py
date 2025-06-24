@@ -262,6 +262,16 @@ def test_promql_get_names():
     p = PromQL.parse('rate(node_cpu_seconds_total{instance="inst1",job="node"}[5m])')
     assert p.get_names() == ["node_cpu_seconds_total"]
     p = PromQL.parse(
-        'rate(node_cpu_seconds_total{instance="inst1",job="node"}[5m]) - rate(something{isntance="inst1",job="node"}[5m])'
+        'rate(node_cpu_seconds_total{instance="inst1",job="node"}[5m]) - rate(something{instance="inst1",job="node"}[5m])'
     )
     assert sorted(p.get_names()) == ["node_cpu_seconds_total", "something"]
+
+def test_promql_quantile():
+    p = PromQL.parse('quantile(0.95,(rate(ceph_osd_op_r_latency_sum{job=~"ceph"}[1h0m]) / on (ceph_daemon) rate(ceph_osd_op_r_latency_count{job=~"ceph"}[1h0m])* 1000))')
+    assert sorted(p.get_names()) == sorted(['ceph_osd_op_r_latency_sum', 'ceph_osd_op_r_latency_count'])
+
+
+def test_promql_wildcard_metric():
+    p = PromQL.parse('{instance=~".*",job="node"}')
+    assert p.name == 'metric'
+    assert p.get_names() == []

@@ -181,10 +181,8 @@ class PromQL(object):
                 try:
                     pql = promql_parser.parse(pql[5:])
                 except Exception as pqlerr:
-                    print(f"Exception PQL parsing {pql}")
                     raise PromQLException(pqlerr)
             else:
-                print(f"Exception PQL parsing {pql}")
                 raise PromQLException(pqlerr)
         if isinstance(pql, promql_parser.BinaryExpr):
             return PromQLBinaryExpr(pql)
@@ -212,6 +210,8 @@ class PromQL(object):
             return PromQLParenExpr(pql)
         elif isinstance(pql, promql_parser.Expr):
             return PromQLExpr(pql)
+        elif isinstance(pql, PromQL):
+            return pql
         if isinstance(pql, dict):
             # try building from repsonse dict a PromQL object
             try:
@@ -238,7 +238,9 @@ class PromQL(object):
             except Exception:
                 raise PromQLException(f"unknown PromQL Type {type(pql)}")
         else:
-            # logger.error(f"unknown PromQL Type {type(pql)}", LF_BASE)
+            logger.error(f"unknown PromQL Type {type(pql)}", LF_BASE)
+            pretty = pql.object.prettify().replace('\n','').strip()
+            logger.error(f"pql = {pretty}")
             raise PromQLException(f"unknown PromQL Type {type(pql)}")
 
     @property
@@ -259,7 +261,7 @@ class PromQL(object):
             try:
                 labels.update(label.to_dict())
             except:
-                pass
+                logger.debug(f"cannot convert label to dict {label}", level=999)
 
         for label in map(lambda x: x.to_dict(), self.matchers):
             labels.update(label)
@@ -366,7 +368,7 @@ class PromQLAggregateExpr(PromQL):
             except PromQLException as err:
                 logger.debug(f"{self} EXPR exception {err}", LF_MODEL)
                 pass
-        except PromQLException:
+        except PromQLException as perr:
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -410,6 +412,7 @@ class PromQLBinaryExpr(PromQL):
                     self._subobjects.update(nside)
                     break
         except PromQLException as err:
+            PromQLException(pql)
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -434,7 +437,7 @@ class PromQLCall(PromQL):
                 object = super(PromQLCall, self).parse(expr)
                 self.matchers.update(object.matchers)
                 self._subobjects.update(object)
-        except PromQLException:
+        except PromQLException as err:
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -458,7 +461,7 @@ class PromQLExpr(PromQL):
             object = super(PromQLExpr, self).parse(self.object)
             self.matchers.update(object.matchers)
             self._subobjects.update(object)
-        except PromQLException:
+        except PromQLException as err:
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -562,7 +565,7 @@ class PromQLMatrixSelector(PromQL):
                 object = super(PromQLMatrixSelector, self).parse(object.expr)
             self.matchers.update(object.matchers)
             self._subobjects.update(object)
-        except PromQLException:
+        except PromQLException as err:
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -590,15 +593,14 @@ class PromQLParenExpr(PromQL):
                         nside = super(PromQLParenExpr, self).parse(nside)
                     elif isinstance(nside, PromQLBinaryExpr):
                         nside = super(PromQLParenExpr, self).parse(nside)
-                    elif isinstance(nside, PromQLExpr):
-                        nside = super(PromQLParenExpr, self).parse(nside)
                     elif isinstance(nside, PromQLParenExpr):
                         nside = super(PromQLParenExpr, self).parse(nside)
-                    else:
-                        self.matchers.update(nside.matchers)
-                        self._subobjects.update(nside)
-                        break
-        except (AttributeError, PromQLException):
+                    elif isinstance(nside, PromQLExpr):
+                        nside = super(PromQLParenExpr, self).parse(nside)
+                    self.matchers.update(nside.matchers)
+                    self._subobjects.update(nside)
+                    break
+        except (AttributeError, PromQLException) as parseerr:
             nside = super(PromQLParenExpr, self).parse(self.object.expr)
             if isinstance(nside, PromQLCall):
                 self.matchers.update(nside.matchers)
@@ -632,7 +634,7 @@ class PromQLSubqueryExpr(PromQL):
                         self._subobjects.update(object)
             except PromQLException as err:
                 pass
-        except PromQLException:
+        except PromQLException as err:
             pass
         logger.debug(f"{self} {list(self._subobjects)}", LF_MODEL)
         return self
@@ -665,8 +667,12 @@ class PromQLVectorSelector(PromQL):
 
     @property
     def name(self) -> str:
-        if self.object.name == None:
+        if all([self.object.name == None,
+                len(self.get_names()) > 0]):
             return "label"
+        elif self.object.name == None:
+            # wildcard metric query assumption
+            return "metric"
         return str(self.object.name)
 
     def parse(self, pql: str | dict | Self) -> Self:
