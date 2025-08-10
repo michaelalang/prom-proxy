@@ -2,7 +2,7 @@
 
 # Prometheus fine grained authorization proxy
 
-The original POC was to show-case the possibility we can gain with utilizing state-of-the-art Authorization engines like [cerbos](https://cerbos.dev/). If you are looking for the use-case checkout the branch `simple-metric-filter`.
+The original POC was to show-case the possibility we can gain with utilizing state-of-the-art Authorization engines like [cerbos](https://cerbos.dev/). If you are looking for the use-case checkout the branch `simple-metric-filter` in the [policy repository](https://github.com/michaelalang/prom-policies).
 
 Bumping the version to 3.x and fixing a ton of issue, I moved the use-case also closer to a real life scenario. 
 
