@@ -107,4 +107,49 @@ This dynamic resolution concept makes it easy to re-use the policy until you nee
 
 ![Juggling all RBACs](pictures/Gemini_Generated_Image_gy3xgugy3xgugy3x.jpeg)
 
+to deploy the second instance of Grafana including fine grained RBAC permissions execute following commands:
+
+* Ensure to adjust the `acm/grafana.ini` file to match the OIDC configuration of your deployment
+* Ensure to adjust the `acm/grafana.ini` file URI's to your Domains accordingly
+* Recreate the `adm/grafana-secret.yml` file by executing following command
+```
+oc -n open-cluster-management-observability create secret generic grafana-secret \
+ --from-file=grafana.ini=acm/grafana.ini --dry-run=client -o yaml \
+ > acm/grafana-config.yml
+```
+
+* Ensure to adjust the `acm/policycreds.yml` secret with the proper Git repository credentials to retrieve policies
+* Ensure to adjust the `acm.route.yml` secret to match your grafana.ini URI's
+
+
+* deploy the stack by executing following command
+```
+oc -n open-cluster-management-observabilty apply -k acm
+```
+
+## finishing the Grafana setup
+
+With the original ACMO Grafana deployment a dashboard loaded is responsible to add the dashboards shipped. With the switch to OIDC and the lack of support of the loader we need to setup the dashboards manual which can be done in three ways:
+
+* copy the `acm/grafana.db` SQLite database into the PVC mount accordingly
+* enable the admin user and set a password to use the Dashboard or API to load all dashboards from the directory `grafana-dashboards`
+* manually import the dashboards for every user from the directory `grafana-dashboards`
+
+Once the dashboards are available we validate the RBAC's configured.
+
+
+## Verification 
+
+![Verifying RBAC](pictures/Gemini_Generated_Image_dvrktydvrktydvrk.jpeg)
+
+* Browse to your ACM Observability URI which includes the RBAC settings
+* Login with a tenant and browse the Cluster Overview Page
+![Tenant1 Cluster overview](pictures/ClusterOverview_tenant1.png)
+
+* copy&paste the URI into a new Browser authenticating as another tenant
+![Tenant2 Cluster overview](pictures/ClusterOverview_tenant2.png)
+
+* repeat for as many clients as you have
+
+* Select any other dashboard and compare the returned metrics accordingly.
 
