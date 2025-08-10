@@ -153,3 +153,28 @@ Once the dashboards are available we validate the RBAC's configured.
 
 * Select any other dashboard and compare the returned metrics accordingly.
 
+* Open the Metrics Browser with a tenant that is restricted to a subset of Clusters
+
+* Select `Observatorium-Unrestricted` as Prometheus datasource 
+* Enter following query in the Metrics browser
+```
+node_cpu_seconds_total{mode="idle", cpu="0"}
+```
+
+![Tenant Metric Browser response filtered](pictures/tenant-mbrowser-response-filtered.png)
+
+* The Proxy filter will return a valid response but filters out all none cluster granted responses.
+**NOTE** the response filter has it's limitation when it comes to sum of aggregations like in 
+```
+sum(rate(node_cpu_seconds_totla{mode="idle", cpu="0"}[2m]))
+```
+Reason is that the returned response from Prometheus does not have any indication of metric or labels but only values.
+
+* To mitigate this you can switch/enforce the Prometheus source accordingly.
+
+* Continue with the `Observatorium-Unrestricted` Datasource and enter following query in the Metircs browser
+```
+node_cpu_seconds_total{cluster="east",mode="idle", cpu="0"}  # a cluster name the tenant has no access to
+```
+
+![Tenant Metric Browser query rejected](pictures/tenant-mbrowser-query-rejected.png)
