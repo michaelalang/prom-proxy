@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations: {}
+  labels:
+    app: prom-policy
+    version: v1
+  name: prom-policy
+  namespace: open-cluster-management-observability
+spec:
+  progressDeadlineSeconds: 10
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: prom-policy
+      version: v1
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        sidecar.opentelemetry.io/inject: 'true'
+      creationTimestamp: null
+      labels:
+        app: prom-policy
+        coo: monitoring-stack
+        sidecar.istio.io/inject: 'false'
+        version: v1
+    spec:
+      containers:
+        - env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: MAX_WORKERS
+              value: '10'
+            - name: POLICYAPI
+              value: grpc://127.0.0.1:3593
+            - name: POLICYAPI-OPA
+              value: http://127.0.0.1:8181
+            - name: POLICYENGINE
+              value: CERBOS
+            - name: AUTH_HEADER
+              value: x-id-token
+            - name: PROMAPI
+              value: http://observability-thanos-query-frontend.open-cluster-management-observability.svc.cluster.local:9090
+          image: localhost/prom-authz:v3.0.0
+          imagePullPolicy: Always
+          name: prom-policy
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 10m
+              memory: 256Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /config
+              name: cerbosconfig
+              readOnly: true
+            - mountPath: /policies
+              name: cerbos
+        - args:
+            - run
+            - "--ignore=.*"
+            - --server
+            - /opa-policies
+          name: opa
+          image: openpolicyagent/opa:latest
+          ports:
+          - name: http
+            containerPort: 8181
+          volumeMounts:
+            - readOnly: true
+              mountPath: /opa-policies
+              name: opa-policies
+        - args:
+            - server
+            - --config=/config/config.yaml
+          env:
+            - name: GITHUB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  key: username
+                  name: policycreds
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: token
+                  name: policycreds
+            - name: CERBOS_NO_TELEMETRY
+              value: "1"
+          image: ghcr.io/cerbos/cerbos:latest
+          imagePullPolicy: IfNotPresent
+          name: cerbos
+          ports:
+            - containerPort: 3593
+              protocol: TCP
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 10m
+              memory: 256Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /config
+              name: cerbosconfig
+              readOnly: true
+            - mountPath: /policies
+              name: cerbos
+            - mountPath: /tmp
+              name: tmp
+            - mountPath: /.cache
+              name: cache
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+        - name: quay-home
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 3
+      volumes:
+        - configMap:
+            defaultMode: 420
+            name: cerbosconfig
+          name: cerbosconfig
+        - emptyDir: {}
+          name: cerbos
+        - emptyDir: {}
+          name: tmp
+        - emptyDir: {}
+          name: cache
+        - configMap:
+            defaultMode: 420
+            name: opa-policies
+          name: opa-policies

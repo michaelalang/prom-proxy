@@ -1,0 +1,96 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  finalizers:
+    - opentelemetrycollector.opentelemetry.io/finalizer
+  name: otel
+  namespace: open-cluster-management-observability
+spec:
+  config:
+    connectors:
+      spanmetrics:
+        dimensions:
+          - name: k8s.namespace.name
+        metrics_flush_interval: 5s
+    exporters:
+      debug:
+        sampling_initial: 5
+        sampling_thereafter: 200
+        verbosity: detailed
+      otlphttp/loki:
+        endpoint: https://loki.apps.example.com/oltp
+        tls:
+          insecure_skip_verify: true
+      otlp/tempo:
+        auth:
+          authenticator: bearertokenauth
+        endpoint: tempo-tempo-observe-gateway.tempo2.svc.cluster.local:8090
+        headers:
+          X-Scope-OrgID: user
+        tls:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    processors:
+      batch: {}
+      k8sattributes: {}
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 1000
+        spike_limit_percentage: 10
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    service:
+      extensions:
+        - bearertokenauth
+      pipelines:
+        logs:
+          exporters:
+            - debug
+            - otlphttp/loki
+          receivers:
+            - otlp
+        traces:
+          exporters:
+            - debug
+            - otlp
+          processors:
+            - memory_limiter
+            - batch
+          receivers:
+            - otlp
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+  configVersions: 3
+  daemonSetUpdateStrategy: {}
+  deploymentUpdateStrategy: {}
+  ingress:
+    route: {}
+  ipFamilyPolicy: SingleStack
+  managementState: managed
+  mode: sidecar
+  observability:
+    metrics: {}
+  podDnsConfig: {}
+  replicas: 1
+  resources: {}
+  targetAllocator:
+    allocationStrategy: consistent-hashing
+    collectorNotReadyGracePeriod: 30s
+    filterStrategy: relabel-config
+    observability:
+      metrics: {}
+    prometheusCR:
+      scrapeInterval: 30s
+    resources: {}
+  upgradeStrategy: automatic

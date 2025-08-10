@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.alpha.openshift.io/serving-cert-generation-error: secret open-cluster-management-observability/grafana-tls
+    service.alpha.openshift.io/serving-cert-generation-error-num: '10'
+    service.alpha.openshift.io/serving-cert-secret-name: grafana-tls
+    service.alpha.openshift.io/serving-cert-signed-by: openshift-service-serving-signer@1740848914
+    service.beta.openshift.io/serving-cert-generation-error: secret open-cluster-management-observability/grafana-tls
+    service.beta.openshift.io/serving-cert-generation-error-num: '10'
+    service.beta.openshift.io/serving-cert-signed-by: openshift-service-serving-signer@1740848914
+  labels:
+    app: multicluster-observability-grafana2
+  name: grafana2
+  namespace: open-cluster-management-observability
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: oauth-proxy
+      port: 9443
+      protocol: TCP
+      targetPort: 3001
+  selector:
+    app: multicluster-observability-grafana2
+  sessionAffinity: None
+  type: ClusterIP

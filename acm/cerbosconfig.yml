@@ -1,0 +1,13 @@
+apiVersion: v1
+data:
+  config.yaml: "server:\n  grpcListenAddr: \":3593\"\n  requestLimits:\n    maxActionsPerResource:\
+    \ 5\n    maxResourcesPerRequest: 500\n  advanced:\n    grpc:\n      maxRecvMsgSizeBytes:\
+    \ 8388608\n  logRequestPayloads: false\n\nengine:\n  defaultPolicyVersion: \"\
+    default\"\n\nstorage:\n  driver: \"git\"\n  git:\n    protocol: https\n    url:\
+    \ https://github.com/michaelalang/prom-policies.git\n    branch: main\n \
+    \   updatePollInterval: 10s\n    operationTimeout: 30s\n    https:\n      username:\
+    \ ${GITHUB_USERNAME}\n      password: ${GITHUB_TOKEN}\n"
+kind: ConfigMap
+metadata:
+  name: cerbosconfig
+  namespace: open-cluster-management-observability

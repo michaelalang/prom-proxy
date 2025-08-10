@@ -1,0 +1,16 @@
+#!/bin/bash
+
+git pull 
+black proxy.py  && \
+podman build -f Dockerfile.s2i -t prom-authz:v1.0.0 && \
+podman run --replace --rm --name prom-proxy --pod prom-policy \
+ -d \
+ -e CERBOSAPI=grpc://127.0.0.1:3593 \
+ -e PROMAPI=https://prometheus.apps.example.com \
+ -e MAX_WORKERS=10 \
+ -e PYTHON_PATH=/opt/app \
+ -e PROMETHEUS_MULTIPROC_DIR=/tmp \
+ -e DEBUG=2 \
+ -v /home/milang/cerbos-quickstart/config:/config \
+ localhost/prom-authz:v1.0.0 && \
+ podman logs -f prom-proxy 2>&1 | tee /tmp/prom-proxy.log

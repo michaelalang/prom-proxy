@@ -1,0 +1,17 @@
+apiVersion: v1
+data:
+  prompolicy.rego: "package abac\n\ndefault allow := false\n\n_has_ns_key := object.get(input,
+    [\"metric\", \"namespace\"], false)\n_has_cluster_key := object.get(input, [\"metric\",
+    \"cluster\"], false)\n_is_function if input.metric.kind == \"function\"\n\ncluster
+    := input.metric.cluster in input.attr.clusterqueries\nns := input.metric.namespace
+    in input.attr.namespacequeries\n\nclusterq if {\n\tsome clu in input.attr.clusterqueries\n\tregex.match(clu,
+    input.metric.cluster)\n}\n\nnsq if {\n\tsome name in input.attr.namespacequeries\n\tregex.match(name,
+    input.metric.namespace)\n}\n\t\n_has_ns_is_valid if {\n\t_has_ns_key in input.attr.namespacequeries\n}\n\n_has_ns_is_valid
+    if {\n\t_has_ns_key == false\n}\n\n_has_cluster_is_valid if {\n\t_has_cluster_key
+    in input.attr.clusterqueries\n}\n\n_has_cluster_is_valid if {\n\t_has_cluster_key
+    == false\n}\n\n_has_cluster_is_valid if clusterq \n\n_has_ns_is_valid if nsq\n\nallow
+    if _is_function\n\nallow if {\n\t_has_cluster_is_valid\n\t_has_ns_is_valid\n}\n"
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: opa-policies

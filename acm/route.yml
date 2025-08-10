@@ -1,0 +1,20 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+    openshift.io/host.generated: 'true'
+  name: grafana2
+  namespace: open-cluster-management-observability
+spec:
+  host: observability.apps.example.com
+  port:
+    targetPort: oauth-proxy
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: grafana2
+    weight: 100
+  wildcardPolicy: None

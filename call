@@ -1,0 +1,27 @@
+#!/bin/bash
+
+API="https://prompolicy.apps.example.com"
+AUTH_HEADER="x-id-token"
+
+while true ; do 
+curl -H "${AUTH_HEADER}: default" -s "${API}/api/v1/query" -d 'query=up{}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace1" -s "${API}/api/v1/query" -d 'query=up{}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace2" -s "${API}/api/v1/query" -d 'query=up{}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace3" -s "${API}/api/v1/query" -d 'query=up{}' -w '%{http_code}\n'
+
+curl -H "${AUTH_HEADER}: default" -s "${API}/api/v1/query" -d 'query={instance="localhost:9090"}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace1" -s "${API}/api/v1/query" -d 'query={instance="localhost:9090"}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace2" -s "${API}/api/v1/query" -d 'query={instance="localhost:9090"}' -w '%{http_code}\n'
+curl -H "${AUTH_HEADER}: namespace3" -s "${API}/api/v1/query" -d 'query={instance="localhost:9090"}' -w '%{http_code}\n'
+
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="superuser"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: superuser" -o/dev/null -w '%{http_code}\n'
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="superuser"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: superuser" -o/dev/null -w '%{http_code}\n'
+
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="namespace4"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: namespace4" -o/dev/null -w '%{http_code}\n'
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="namespace4"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: namespace4" -o/dev/null -w '%{http_code}\n'
+
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="namespace2"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: namespace2" -o/dev/null -w '%{http_code}\n'
+curl -s "${API}/api/v1/query_range" -d "end=$(date +'%s' --date='+5min')" -d 'query=irate(node_cpu_seconds_total{instance="server02.example.com:9100",job="node",tenant="namespace2"} [1m0s])' -d "start=$(date +'%s' --date='-5min')" -d 'step=15' -H "${AUTH_HEADER}: namespace2" -o/dev/null -w '%{http_code}\n'
+
+[ -f /tmp/.stop ] && break
+done

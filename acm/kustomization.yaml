@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- cerbosconfig.yml
+- deploy-grafana.yml
+- deploy-prom-policy.yml
+- grafana-config.yml
+- grafana-datasources.yml
+- grafana-tls.yml
+- otelcollector.yml
+- policycreds.yml
+- pvc.yml
+- route.yml
+- service.yml
+- opa-policies.yml

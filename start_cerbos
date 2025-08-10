@@ -1,0 +1,3 @@
+#!/bin/bash
+
+podman rm -f cerbos ; podman run -d --pod prom-policy --rm --name cerbos -v /home/milang/cerbos-quickstart/config:/config -e GITHUB_TOKEN="$(vault gogs -k milang-token)" ghcr.io/cerbos/cerbos:latest server --config=/config/config.yml

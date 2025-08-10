@@ -1,0 +1,12 @@
+#!/bin/bash
+API=https://perses.apps.example.com/api/v1/
+curl -k -X POST -d @project.json -H "Content-Type: application/json" ${API}projects
+
+for src in $(ls datasource*) ; do 
+    export token=$(oidc -u $(basename -s .json ${src} | cut -f2 -d'-'))
+    curl -k -X POST -d "$(envsubst < ${src})" -H "Content-Type: application/json" ${API}globaldatasources
+done
+
+for dash in $(ls dashboard*) ; do 
+    curl -k -X POST -d @${dash} -H "Content-Type: application/json" ${API}projects/filtered/dashboards
+done
